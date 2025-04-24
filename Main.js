@@ -20,7 +20,7 @@ function getSystemSettings() {
       Logger.log('SPREADSHEET_IDが設定されていません。');
       return getDefaultSettings();
     }
-    
+
     // スプレッドシートを開く
     var spreadsheet;
     try {
@@ -29,14 +29,14 @@ function getSystemSettings() {
       Logger.log('スプレッドシートを開けませんでした: ' + e);
       return getDefaultSettings();
     }
-    
+
     // システム設定シートを取得
     var settingsSheet = spreadsheet.getSheetByName('システム設定');
     if (!settingsSheet) {
       Logger.log('システム設定シートが見つかりません。');
       return getDefaultSettings();
     }
-    
+
     // 設定データを読み込む
     var settingsData;
     try {
@@ -45,29 +45,29 @@ function getSystemSettings() {
       Logger.log('設定データの読み込みに失敗しました: ' + e);
       return getDefaultSettings();
     }
-    
+
     // 設定マップを作成
     var settingsMap = {};
     for (var i = 1; i < settingsData.length; i++) {
       if (settingsData[i].length >= 2) {
         var key = String(settingsData[i][0] || '').trim();
         var value = settingsData[i][1];
-        
+
         if (key) {
           settingsMap[key] = value;
         }
       }
     }
-    
+
     // 管理者メールアドレスを処理
     var adminEmails = [];
     if (settingsMap['ADMIN_EMAIL']) {
       var emailStr = String(settingsMap['ADMIN_EMAIL']);
       adminEmails = emailStr.split(',')
-        .map(function(email) { return email.trim(); })
-        .filter(function(email) { return email !== ''; });
+        .map(function (email) { return email.trim(); })
+        .filter(function (email) { return email !== ''; });
     }
-    
+
     // 結果オブジェクトを構築
     return {
       ASSEMBLYAI_API_KEY: settingsMap['ASSEMBLYAI_API_KEY'] || '',
@@ -98,7 +98,7 @@ function getDefaultSettings() {
     COMPLETED_FOLDER_ID: '',
     ERROR_FOLDER_ID: '',
     ADMIN_EMAILS: [],
-    MAX_BATCH_SIZE: 3,
+    MAX_BATCH_SIZE: 6,
     ENHANCE_WITH_OPENAI: true
   };
 }
@@ -120,16 +120,16 @@ function saveCallRecordToSheet(callData) {
     var dateTimeInfo = SpreadsheetManager.extractDateTimeFromFileName(callData.fileName);
     var formattedDate = dateTimeInfo.formattedDate;
     var formattedTime = dateTimeInfo.formattedTime;
-    
+
     // スプレッドシートIDを取得
     var spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
     if (!spreadsheetId) {
       throw new Error('SPREADSHEET_IDが設定されていません');
     }
-    
+
     var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
     var sheet = spreadsheet.getSheetByName('通話記録');
-    
+
     if (!sheet) {
       // シートが存在しない場合は作成
       sheet = spreadsheet.insertSheet('通話記録');
@@ -138,14 +138,14 @@ function saveCallRecordToSheet(callData) {
         ['record_id', 'call_date', 'call_time', 'sales_company', 'sales_person', 'customer_company', 'customer_name', 'call_status', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
       ]);
     }
-    
+
     // 最終行の次の行に追加
     var lastRow = sheet.getLastRow();
     var newRow = lastRow + 1;
-    
+
     // record_idをファイル名から抽出した元の時間情報から生成
     var recordId = dateTimeInfo.originalDateTime;
-    
+
     // データを配列として準備
     var rowData = [
       recordId,
@@ -161,7 +161,7 @@ function saveCallRecordToSheet(callData) {
       callData.summary,
       callData.transcription
     ];
-    
+
     // 行を追加
     sheet.getRange(newRow, 1, 1, rowData.length).setValues([rowData]);
     return true;
@@ -177,52 +177,52 @@ function saveCallRecordToSheet(callData) {
 function processBatch() {
   var startTime = new Date();
   Logger.log('バッチ処理開始: ' + startTime);
-  
+
   try {
     // 設定を直接取得
     var localSettings = getSystemSettings();
-    
+
     // APIキーと処理対象フォルダの確認
     if (!localSettings.ASSEMBLYAI_API_KEY) {
       throw new Error('Assembly AI APIキーが設定されていません');
     }
-    
+
     if (!localSettings.SOURCE_FOLDER_ID) {
       throw new Error('処理対象フォルダIDが設定されていません');
     }
-    
+
     // 未処理のファイルを取得
     var files = FileProcessor.getUnprocessedFiles(localSettings.SOURCE_FOLDER_ID, localSettings.MAX_BATCH_SIZE);
     Logger.log('処理対象ファイル数: ' + files.length);
-    
+
     if (files.length === 0) {
       return '処理対象ファイルはありませんでした。';
     }
-    
+
     // ファイル処理
     var results = {
       success: 0,
       error: 0,
       details: []
     };
-    
+
     for (var i = 0; i < files.length; i++) {
       var file = files[i];
       var fileStartTime = new Date();
       var fileStartTimeStr = Utilities.formatDate(fileStartTime, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
-      
+
       try {
         Logger.log('ファイル処理開始: ' + file.getName());
-        
+
         // ファイルを処理中フォルダに移動
         FileProcessor.moveFileToFolder(file, localSettings.PROCESSING_FOLDER_ID);
-        
+
         // 処理ログに記録
         var logId = 'log_' + new Date().getTime() + '_' + i;
-        
+
         // 文字起こし処理
         var transcriptionResult = TranscriptionService.transcribe(
-          file, 
+          file,
           localSettings.ASSEMBLYAI_API_KEY,
           localSettings.OPENAI_API_KEY
         );
@@ -236,14 +236,14 @@ function processBatch() {
 
         extractedInfo = InformationExtractor.extract(
           transcriptionResult.text,
-          transcriptionResult.utterances, 
+          transcriptionResult.utterances,
           localSettings.OPENAI_API_KEY
         );
-        
+
         // 処理終了時間を取得
         var fileEndTime = new Date();
         var fileEndTimeStr = Utilities.formatDate(fileEndTime, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
-        
+
         // スプレッドシートに書き込み
         var callData = {
           fileName: file.getName(),
@@ -257,10 +257,10 @@ function processBatch() {
           summary: extractedInfo.summary,
           transcription: transcriptionResult.text
         };
-        
+
         // 通話記録シートに出力
         saveCallRecordToSheet(callData);
-        
+
         // 処理ログのみに処理時間を記録
         SpreadsheetManager.logProcessing(
           file.getName(),
@@ -268,10 +268,10 @@ function processBatch() {
           fileStartTimeStr,
           fileEndTimeStr
         );
-        
+
         // ファイルを完了フォルダに移動
         FileProcessor.moveFileToFolder(file, localSettings.COMPLETED_FOLDER_ID);
-        
+
         // 処理結果を記録
         results.success++;
         results.details.push({
@@ -281,18 +281,18 @@ function processBatch() {
         });
       } catch (error) {
         Logger.log('ファイル処理エラー: ' + error.toString());
-        
+
         // 処理終了時間を取得（エラー時）
         var fileEndTime = new Date();
         var fileEndTimeStr = Utilities.formatDate(fileEndTime, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
-        
+
         // ファイルをエラーフォルダに移動
         try {
           FileProcessor.moveFileToFolder(file, localSettings.ERROR_FOLDER_ID);
         } catch (moveError) {
           Logger.log('ファイルの移動中にエラー: ' + moveError.toString());
         }
-        
+
         // 処理結果を記録
         results.error++;
         results.details.push({
@@ -300,19 +300,19 @@ function processBatch() {
           status: 'error',
           message: error.toString()
         });
-        
+
         // エラーログに処理時間も記録
         SpreadsheetManager.logProcessing(file.getName(), 'エラー: ' + error.toString(), fileStartTimeStr, fileEndTimeStr);
       }
     }
-    
+
     // 処理結果の通知
     var endTime = new Date();
     var processingTime = (endTime - startTime) / 1000; // 秒単位
-    
+
     var summary = '処理完了: ' + results.success + '件成功, ' + results.error + '件エラー, 処理時間: ' + processingTime + '秒';
     Logger.log(summary);
-    
+
     return summary;
   } catch (error) {
     var errorMessage = 'バッチ処理エラー: ' + error.toString();
@@ -330,7 +330,7 @@ function setupTriggers() {
   for (var i = 0; i < triggers.length; i++) {
     ScriptApp.deleteTrigger(triggers[i]);
   }
-  
+
   // 9時にプロセスを開始するトリガー
   ScriptApp.newTrigger('startDailyProcess')
     .timeBased()
@@ -338,13 +338,13 @@ function setupTriggers() {
     .nearMinute(0)
     .everyDays(1)
     .create();
-  
-  // 15分ごとの処理実行トリガー
+
+  // 8分ごとの処理実行トリガー
   ScriptApp.newTrigger('processBatchOnSchedule')
     .timeBased()
-    .everyMinutes(15)
+    .everyMinutes(8)
     .create();
-  
+
   // 日次サマリー送信用のトリガー
   ScriptApp.newTrigger('sendDailySummary')
     .timeBased()
@@ -352,8 +352,8 @@ function setupTriggers() {
     .nearMinute(10)
     .everyDays(1)
     .create();
-  
-  return '9時開始トリガー、15分ごとの処理トリガー、18:10の日次サマリートリガーを設定しました。';
+
+  return '9時開始トリガー、8分ごとの処理トリガー、18:10の日次サマリートリガーを設定しました。';
 }
 
 /**
@@ -362,18 +362,18 @@ function setupTriggers() {
 function startDailyProcess() {
   var now = new Date();
   var day = now.getDay(); // 0(日)～6(土)
-  
+
   // 平日(月～金)のみ実行
   if (day >= 1 && day <= 5) {
     // スクリプトプロパティに処理開始フラグを設定
     PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'true');
-    
+
     // 最初の処理を実行
     return processBatch();
   } else {
     // スクリプトプロパティに処理無効フラグを設定
     PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'false');
-    
+
     return '休業日のため処理をスキップしました。';
   }
 }
@@ -385,10 +385,10 @@ function processBatchOnSchedule() {
   var now = new Date();
   var day = now.getDay(); // 0(日)～6(土)
   var hour = now.getHours();
-  
+
   // 処理有効フラグを確認
   var processingEnabled = PropertiesService.getScriptProperties().getProperty('PROCESSING_ENABLED');
-  
+
   // 平日(月～金)の9時～21時の間のみ実行かつ処理フラグが有効
   if (day >= 1 && day <= 5 && hour >= 9 && hour < 21 && processingEnabled === 'true') {
     return processBatch();
@@ -397,7 +397,7 @@ function processBatchOnSchedule() {
     if (hour >= 21) {
       PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'false');
     }
-    
+
     return '業務時間外のため処理をスキップしました。';
   } else {
     return '処理フラグが無効または休業日のため処理をスキップしました。';
@@ -411,65 +411,65 @@ function sendDailySummary() {
   try {
     // 設定を直接取得 (既存のloadSettings関数に依存しない)
     var settings = getSystemSettings();
-    
+
     // スプレッドシートIDを取得
     var spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
     if (!spreadsheetId) {
       return 'SPREADSHEET_IDが設定されていません';
     }
-    
+
     // スプレッドシートを開く
     var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
     var logSheet = spreadsheet.getSheetByName('処理ログ');
-    
+
     if (!logSheet) {
       return '処理ログシートが見つかりません';
     }
-    
+
     // 現在の日付を取得
     var today = new Date();
     var todayStr = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy-MM-dd');
-    
+
     // スプレッドシートの表示形式の日付（YYYY/MM/DD）
     var todayYMD = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy/MM/dd');
-    
+
     // ヘッダー行とカラムインデックスを特定
     var allData = logSheet.getDataRange().getValues();
     if (allData.length <= 1) {
       return '処理ログシートにデータがありません';
     }
-    
+
     var headerRow = allData[0];
-    
+
     var fileNameIdx = headerRow.indexOf('file_name');
     var statusIdx = headerRow.indexOf('status');
     var processStartIdx = headerRow.indexOf('process_start');
     var processEndIdx = headerRow.indexOf('process_end');
-    
+
     // カラム名が異なる場合の対応
     if (fileNameIdx === -1) fileNameIdx = headerRow.indexOf('ファイル名');
     if (statusIdx === -1) statusIdx = headerRow.indexOf('ステータス');
     if (processStartIdx === -1) processStartIdx = headerRow.indexOf('処理開始');
     if (processEndIdx === -1) processEndIdx = headerRow.indexOf('処理終了');
-    
+
     // 処理ログシートのすべてのセルの表示値を取得
     var displayValues = logSheet.getDataRange().getDisplayValues();
-    
+
     // 当日のログを抽出（表示値を使用）
     var todayLogs = [];
     var todayValues = [];
     var todayDisplayValues = [];
-    
+
     for (var i = 1; i < allData.length; i++) {
       var row = allData[i];
       var displayRow = displayValues[i];
       var fileName = (fileNameIdx >= 0) ? row[fileNameIdx] : "不明なファイル";
-      
+
       // プロセス開始時間の表示値からYYYY/MM/DD部分を抽出
       if (processStartIdx >= 0) {
         var displayDateStr = displayRow[processStartIdx];
         var dateOnly = '';
-        
+
         // YYYY/MM/DD または YYYY-MM-DD 形式を抽出
         if (typeof displayDateStr === 'string') {
           var match = displayDateStr.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})/);
@@ -477,7 +477,7 @@ function sendDailySummary() {
             dateOnly = match[0].replace(/-/g, '/'); // ハイフンをスラッシュに統一
           }
         }
-        
+
         // 抽出した日付部分が今日の日付と一致するか確認
         if (dateOnly && (dateOnly === todayYMD || dateOnly === todayStr.replace(/-/g, '/'))) {
           todayLogs.push(row);
@@ -486,43 +486,43 @@ function sendDailySummary() {
         }
       }
     }
-    
+
     // 集計結果を作成
     var successCount = 0;
     var errorCount = 0;
     var totalProcessingTime = 0;
     var fileDetails = [];
     var processedFiles = {};
-    
+
     for (var i = 0; i < todayLogs.length; i++) {
       var row = todayValues[i];
       var displayRow = todayDisplayValues[i];
       var fileName = fileNameIdx >= 0 ? row[fileNameIdx] : '不明なファイル';
       var status = statusIdx >= 0 ? row[statusIdx] : '不明なステータス';
-      
+
       // 処理時間の計算 - 表示値から直接時間を抽出して計算
       var processingTime = 0;
       if (processStartIdx >= 0 && processEndIdx >= 0) {
         var startTimeDisplay = displayRow[processStartIdx];
         var endTimeDisplay = displayRow[processEndIdx];
-        
+
         if (startTimeDisplay && endTimeDisplay) {
           // 時間部分を抽出 (HH:MM:SS)
           var startTimeMatch = startTimeDisplay.match(/(\d{1,2}):(\d{1,2}):(\d{1,2})$/);
           var endTimeMatch = endTimeDisplay.match(/(\d{1,2}):(\d{1,2}):(\d{1,2})$/);
-          
+
           if (startTimeMatch && endTimeMatch) {
             // 秒に変換して差分を計算
-            var startSeconds = parseInt(startTimeMatch[1]) * 3600 + 
-                              parseInt(startTimeMatch[2]) * 60 + 
-                              parseInt(startTimeMatch[3]);
-            
-            var endSeconds = parseInt(endTimeMatch[1]) * 3600 + 
-                            parseInt(endTimeMatch[2]) * 60 + 
-                            parseInt(endTimeMatch[3]);
-            
+            var startSeconds = parseInt(startTimeMatch[1]) * 3600 +
+              parseInt(startTimeMatch[2]) * 60 +
+              parseInt(startTimeMatch[3]);
+
+            var endSeconds = parseInt(endTimeMatch[1]) * 3600 +
+              parseInt(endTimeMatch[2]) * 60 +
+              parseInt(endTimeMatch[3]);
+
             processingTime = endSeconds - startSeconds;
-            
+
             // 日付が変わったケース（例: 23:59:59 → 00:00:05）の対応
             if (processingTime < 0) {
               processingTime += 24 * 3600; // 24時間分の秒数を追加
@@ -530,32 +530,32 @@ function sendDailySummary() {
           }
         }
       }
-      
+
       // ステータス判定
       var isSuccess = false;
       var isError = false;
-      
+
       if (status) {
         var statusStr = String(status).toLowerCase();
-        isSuccess = statusStr.indexOf('完了') !== -1 || 
-                    statusStr.indexOf('成功') !== -1 || 
-                    statusStr.indexOf('保存') !== -1 ||
-                    statusStr === 'ok' ||
-                    statusStr === 'success';
-                    
-        isError = statusStr.indexOf('エラー') !== -1 || 
-                  statusStr.indexOf('失敗') !== -1 || 
-                  statusStr === 'error' ||
-                  statusStr === 'fail' ||
-                  statusStr === 'failed';
+        isSuccess = statusStr.indexOf('完了') !== -1 ||
+          statusStr.indexOf('成功') !== -1 ||
+          statusStr.indexOf('保存') !== -1 ||
+          statusStr === 'ok' ||
+          statusStr === 'success';
+
+        isError = statusStr.indexOf('エラー') !== -1 ||
+          statusStr.indexOf('失敗') !== -1 ||
+          statusStr === 'error' ||
+          statusStr === 'fail' ||
+          statusStr === 'failed';
       }
-      
+
       if (isSuccess) {
         successCount++;
       } else if (isError) {
         errorCount++;
       }
-      
+
       // ファイル詳細を追加/更新（同一ファイル名の場合は最新の情報を保持）
       if (!processedFiles[fileName]) {
         processedFiles[fileName] = {
@@ -570,19 +570,19 @@ function sendDailySummary() {
           processedFiles[fileName].processingTime = processingTime;
         }
       }
-      
+
       // 処理時間の合計に加算
       if (processingTime > 0) {
         totalProcessingTime += processingTime;
       }
     }
-    
+
     // 平均処理時間を計算
     var avgProcessingTime = 0;
     if (fileDetails.length > 0) {
       avgProcessingTime = totalProcessingTime / fileDetails.length;
     }
-    
+
     // サマリー結果を作成
     var results = {
       success: successCount,
@@ -592,16 +592,16 @@ function sendDailySummary() {
       totalProcessingTime: totalProcessingTime,
       avgProcessingTime: avgProcessingTime
     };
-    
+
     // 管理者に通知
     if (settings.ADMIN_EMAILS && settings.ADMIN_EMAILS.length > 0) {
       // 各管理者に通知を送信
-      settings.ADMIN_EMAILS.forEach(function(email) {
+      settings.ADMIN_EMAILS.forEach(function (email) {
         sendEnhancedDailySummary(email, results, todayStr);
       });
-      
-      return '日次サマリーを送信しました: ' + todayStr + ' (成功=' + successCount + 
-             ', エラー=' + errorCount + ', 合計処理時間=' + formatTime(totalProcessingTime) + ')';
+
+      return '日次サマリーを送信しました: ' + todayStr + ' (成功=' + successCount +
+        ', エラー=' + errorCount + ', 合計処理時間=' + formatTime(totalProcessingTime) + ')';
     } else {
       return '通知先メールアドレスが設定されていません';
     }
@@ -621,38 +621,38 @@ function sendEnhancedDailySummary(email, results, dateStr) {
   if (!email) {
     throw new Error('送信先メールアドレスが指定されていません');
   }
-  
+
   var subject = '顧客会話自動文字起こしシステム - ' + dateStr + ' 日次処理結果サマリー';
-  
+
   var body = dateStr + ' の処理結果サマリー\n\n' +
-             '成功: ' + results.success + '件\n' +
-             'エラー: ' + results.error + '件\n';
-  
+    '成功: ' + results.success + '件\n' +
+    'エラー: ' + results.error + '件\n';
+
   // 処理時間情報を追加
   if (results.totalProcessingTime > 0) {
     body += '合計処理時間: ' + formatTime(results.totalProcessingTime) + '\n';
     body += '平均処理時間: ' + formatTime(results.avgProcessingTime) + '\n';
   }
-  
+
   body += '\n';
-  
+
   if (results.details && results.details.length > 0) {
     body += '処理ファイル一覧:\n';
     for (var i = 0; i < results.details.length; i++) {
       var detail = results.details[i];
       var detailText = '- ' + detail.fileName + ': ' + detail.status;
-      
+
       // 処理時間情報を追加（存在する場合）
       if (detail.processingTime && detail.processingTime > 0) {
         detailText += ' (処理時間: ' + formatTime(detail.processingTime) + ')';
       }
-      
+
       body += detailText + '\n';
     }
   } else {
     body += '本日処理されたファイルはありません。\n';
   }
-  
+
   // メール送信
   GmailApp.sendEmail(email, subject, body);
 }
@@ -664,7 +664,7 @@ function sendEnhancedDailySummary(email, results, dateStr) {
  */
 function formatTime(seconds) {
   seconds = Math.round(seconds);
-  
+
   if (seconds < 60) {
     return seconds + '秒';
   } else if (seconds < 3600) {
@@ -675,7 +675,7 @@ function formatTime(seconds) {
     var hours = Math.floor(seconds / 3600);
     var remainingMinutes = Math.floor((seconds % 3600) / 60);
     var remainingSeconds = seconds % 60;
-    
+
     var result = hours + '時間';
     if (remainingMinutes > 0) {
       result += remainingMinutes + '分';
@@ -683,7 +683,7 @@ function formatTime(seconds) {
     if (remainingSeconds > 0) {
       result += remainingSeconds + '秒';
     }
-    
+
     return result;
   }
 }
@@ -694,26 +694,26 @@ function formatTime(seconds) {
 function testNewSendDailySummary() {
   try {
     Logger.log("新しいsendDailySummaryのテスト開始");
-    
+
     // 設定が正しく読み込めるか確認
     var settings = getSystemSettings();
     Logger.log("設定読み込み結果: ADMIN_EMAILS = " + JSON.stringify(settings.ADMIN_EMAILS));
-    
+
     // 関数を呼び出し、結果を取得
     var result = sendDailySummary();
-    
+
     // ログにテスト結果を出力
     Logger.log("テスト結果: " + result);
-    
+
     return "テストが完了しました: " + result;
   } catch (error) {
     // エラー発生時の詳細なログ
     Logger.log("testNewSendDailySummaryでエラー: " + error.toString());
-    
+
     if (error.stack) {
       Logger.log("エラースタック: " + error.stack);
     }
-    
+
     return "テスト中にエラーが発生しました: " + error.toString();
   }
 }
