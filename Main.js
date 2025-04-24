@@ -322,13 +322,20 @@ function processBatch() {
 }
 
 /**
- * トリガーを設定する関数
+ * 文字起こし処理用のトリガーを設定する関数
  */
-function setupTriggers() {
+function setupTranscriptionTriggers() {
   // 既存のトリガーをすべて削除
   var triggers = ScriptApp.getProjectTriggers();
   for (var i = 0; i < triggers.length; i++) {
-    ScriptApp.deleteTrigger(triggers[i]);
+    var trigger = triggers[i];
+    var handlerFunction = trigger.getHandlerFunction();
+    // 自分が管理するトリガーのみ削除
+    if (handlerFunction === 'startDailyProcess' ||
+      handlerFunction === 'processBatchOnSchedule' ||
+      handlerFunction === 'sendDailySummary') {
+      ScriptApp.deleteTrigger(trigger);
+    }
   }
 
   // 7時にプロセスを開始するトリガー
@@ -353,7 +360,10 @@ function setupTriggers() {
     .everyDays(1)
     .create();
 
-  return '7時開始トリガー、10分ごとの処理トリガー、18:10の日次サマリートリガーを設定しました。';
+  return '文字起こし処理用トリガーを設定しました：\n' +
+    '1. 7時開始トリガー\n' +
+    '2. 10分ごとの処理トリガー\n' +
+    '3. 18:10の日次サマリートリガー';
 }
 
 /**
