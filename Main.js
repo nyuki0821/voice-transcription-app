@@ -331,10 +331,10 @@ function setupTriggers() {
     ScriptApp.deleteTrigger(triggers[i]);
   }
 
-  // 9時にプロセスを開始するトリガー
+  // 7時にプロセスを開始するトリガー
   ScriptApp.newTrigger('startDailyProcess')
     .timeBased()
-    .atHour(9)
+    .atHour(7)
     .nearMinute(0)
     .everyDays(1)
     .create();
@@ -353,7 +353,7 @@ function setupTriggers() {
     .everyDays(1)
     .create();
 
-  return '9時開始トリガー、8分ごとの処理トリガー、18:10の日次サマリートリガーを設定しました。';
+  return '7時開始トリガー、8分ごとの処理トリガー、18:10の日次サマリートリガーを設定しました。';
 }
 
 /**
@@ -414,43 +414,17 @@ function recoverStuckFiles() {
 }
 
 /**
- * 1日の処理開始関数（9時に実行）
- */
-function startDailyProcess() {
-  var now = new Date();
-  var day = now.getDay(); // 0(日)～6(土)
-
-  // 平日(月～金)のみ実行
-  if (day >= 1 && day <= 5) {
-    // 処理開始前に、処理中に残っているファイルがあれば未処理に戻す
-    recoverStuckFiles();
-
-    // スクリプトプロパティに処理開始フラグを設定
-    PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'true');
-
-    // 最初の処理を実行
-    return processBatch();
-  } else {
-    // スクリプトプロパティに処理無効フラグを設定
-    PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'false');
-
-    return '休業日のため処理をスキップしました。';
-  }
-}
-
-/**
  * スケジュール実行用の処理関数（時間条件付き）
  */
 function processBatchOnSchedule() {
   var now = new Date();
-  var day = now.getDay(); // 0(日)～6(土)
   var hour = now.getHours();
 
   // 処理有効フラグを確認
   var processingEnabled = PropertiesService.getScriptProperties().getProperty('PROCESSING_ENABLED');
 
-  // 平日(月～金)の9時～21時の間のみ実行かつ処理フラグが有効
-  if (day >= 1 && day <= 5 && hour >= 9 && hour < 21 && processingEnabled === 'true') {
+  // 7時～22時の間のみ実行かつ処理フラグが有効
+  if (hour >= 7 && hour < 22 && processingEnabled === 'true') {
     // 処理前に処理中フォルダをチェックし、必要ならリカバリー処理を実行
     var localSettings = getSystemSettings();
     if (localSettings.PROCESSING_FOLDER_ID) {
@@ -465,16 +439,33 @@ function processBatchOnSchedule() {
     }
 
     return processBatch();
-  } else if (hour >= 21 || hour < 9) {
+  } else if (hour >= 22 || hour < 7) {
     // 業務時間外の場合は処理フラグをリセット
-    if (hour >= 21) {
+    if (hour >= 22) {
       PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'false');
     }
 
     return '業務時間外のため処理をスキップしました。';
   } else {
-    return '処理フラグが無効または休業日のため処理をスキップしました。';
+    return '処理フラグが無効のため処理をスキップしました。';
   }
+}
+
+/**
+ * 1日の処理開始関数（7時に実行）
+ */
+function startDailyProcess() {
+  var now = new Date();
+
+  // 7時に処理を開始
+  // 処理開始前に、処理中に残っているファイルがあれば未処理に戻す
+  recoverStuckFiles();
+
+  // スクリプトプロパティに処理開始フラグを設定
+  PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'true');
+
+  // 最初の処理を実行
+  return processBatch();
 }
 
 /**
