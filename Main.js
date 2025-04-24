@@ -77,7 +77,7 @@ function getSystemSettings() {
       COMPLETED_FOLDER_ID: settingsMap['COMPLETED_FOLDER_ID'] || '',
       ERROR_FOLDER_ID: settingsMap['ERROR_FOLDER_ID'] || '',
       ADMIN_EMAILS: adminEmails,
-      MAX_BATCH_SIZE: parseInt(settingsMap['MAX_BATCH_SIZE'] || '3', 10),
+      MAX_BATCH_SIZE: parseInt(settingsMap['MAX_BATCH_SIZE'] || '10', 10),
       ENHANCE_WITH_OPENAI: settingsMap['ENHANCE_WITH_OPENAI'] !== false
     };
   } catch (error) {
@@ -98,7 +98,7 @@ function getDefaultSettings() {
     COMPLETED_FOLDER_ID: '',
     ERROR_FOLDER_ID: '',
     ADMIN_EMAILS: [],
-    MAX_BATCH_SIZE: 6,
+    MAX_BATCH_SIZE: 10,
     ENHANCE_WITH_OPENAI: true
   };
 }
@@ -339,10 +339,10 @@ function setupTriggers() {
     .everyDays(1)
     .create();
 
-  // 8分ごとの処理実行トリガー
+  // 10分ごとの処理実行トリガー
   ScriptApp.newTrigger('processBatchOnSchedule')
     .timeBased()
-    .everyMinutes(8)
+    .everyMinutes(10)
     .create();
 
   // 日次サマリー送信用のトリガー
@@ -353,7 +353,7 @@ function setupTriggers() {
     .everyDays(1)
     .create();
 
-  return '7時開始トリガー、8分ごとの処理トリガー、18:10の日次サマリートリガーを設定しました。';
+  return '7時開始トリガー、10分ごとの処理トリガー、18:10の日次サマリートリガーを設定しました。';
 }
 
 /**
