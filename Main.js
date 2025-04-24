@@ -357,6 +357,63 @@ function setupTriggers() {
 }
 
 /**
+ * 処理中フォルダに残ったファイルを未処理フォルダに戻す関数
+ * タイムアウトなどで処理が中断された場合のリカバリー用
+ * @return {string} - 処理結果のメッセージ
+ */
+function recoverStuckFiles() {
+  try {
+    // 設定を取得
+    var localSettings = getSystemSettings();
+
+    // 処理中フォルダとソースフォルダのIDを確認
+    if (!localSettings.PROCESSING_FOLDER_ID || !localSettings.SOURCE_FOLDER_ID) {
+      return 'フォルダIDが設定されていません';
+    }
+
+    // 処理中フォルダ内のファイルを取得
+    var processingFolder = DriveApp.getFolderById(localSettings.PROCESSING_FOLDER_ID);
+    var files = processingFolder.getFiles();
+
+    var movedCount = 0;
+    var fileList = [];
+
+    // 処理中フォルダ内のファイルをソースフォルダに移動
+    while (files.hasNext()) {
+      var file = files.next();
+      fileList.push(file.getName());
+
+      try {
+        FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
+        movedCount++;
+
+        // 処理ログに記録
+        SpreadsheetManager.logProcessing(
+          file.getName(),
+          'タイムアウトリカバリー：未処理フォルダに戻しました',
+          Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'),
+          Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
+        );
+      } catch (moveError) {
+        Logger.log('ファイルの移動中にエラー: ' + moveError.toString());
+      }
+    }
+
+    if (movedCount > 0) {
+      var message = '処理中フォルダから' + movedCount + '件のファイルを未処理フォルダに戻しました。ファイル: ' + fileList.join(', ');
+      Logger.log(message);
+      return message;
+    } else {
+      return '処理中フォルダに残っているファイルはありませんでした。';
+    }
+  } catch (error) {
+    var errorMessage = '中断ファイルのリカバリー処理中にエラー: ' + error.toString();
+    Logger.log(errorMessage);
+    return errorMessage;
+  }
+}
+
+/**
  * 1日の処理開始関数（9時に実行）
  */
 function startDailyProcess() {
@@ -365,6 +422,9 @@ function startDailyProcess() {
 
   // 平日(月～金)のみ実行
   if (day >= 1 && day <= 5) {
+    // 処理開始前に、処理中に残っているファイルがあれば未処理に戻す
+    recoverStuckFiles();
+
     // スクリプトプロパティに処理開始フラグを設定
     PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'true');
 
@@ -391,6 +451,19 @@ function processBatchOnSchedule() {
 
   // 平日(月～金)の9時～21時の間のみ実行かつ処理フラグが有効
   if (day >= 1 && day <= 5 && hour >= 9 && hour < 21 && processingEnabled === 'true') {
+    // 処理前に処理中フォルダをチェックし、必要ならリカバリー処理を実行
+    var localSettings = getSystemSettings();
+    if (localSettings.PROCESSING_FOLDER_ID) {
+      var processingFolder = DriveApp.getFolderById(localSettings.PROCESSING_FOLDER_ID);
+      var files = processingFolder.getFiles();
+
+      // 処理中フォルダにファイルがある場合はリカバリー処理を実行
+      if (files.hasNext()) {
+        Logger.log('処理中フォルダに残っているファイルを検出しました。リカバリー処理を実行します。');
+        recoverStuckFiles();
+      }
+    }
+
     return processBatch();
   } else if (hour >= 21 || hour < 9) {
     // 業務時間外の場合は処理フラグをリセット
