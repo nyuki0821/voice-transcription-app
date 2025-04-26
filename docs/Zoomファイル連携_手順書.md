@@ -304,19 +304,58 @@ function purgeOldRecordings() {
 <a id="sec12"></a>
 ## 12. デプロイ手順
 
+> **clasp v3 (2025-04 以降) 対応版** — 旧 `clasp deploy --type` は廃止されています。
+
+### 12.1 コードを反映（push）
 ```bash
-# コードを GAS プロジェクトへ反映
-$ clasp push
-
-# トリガーを再設定（初回または設定変更時）
-$ clasp run setupZoomTriggers -p '[]'
-
-# Webhook 用 WebApp を新しいバージョンでデプロイ
-# GAS エディタ → [デプロイ] → [新しいデプロイ] → 種類: ウェブアプリ
-#   実行関数: doPost, アクセス: 全員、承認を完了させて URL を取得
+# src/ を丸ごと GAS プロジェクトへアップロード
+# manifest を更新した場合は --force が安全
+$ clasp push --force
 ```
 
-デプロイ後は Webhook URL が変わるため、Zoom Marketplace 側の設定を更新してください。
+### 12.2 必要スコープ宣言（初回のみ）
+`src/appsscript.json` に以下を追加し、スクリプトを再 push します。
+```jsonc
+"oauthScopes": [
+  "https://www.googleapis.com/auth/script.scriptapp",
+  "https://www.googleapis.com/auth/script.external_request",
+  "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/gmail.send"
+],
+"executionApi": { "access": "ANYONE" }
+```
+
+### 12.3 OAuth クレデンシャルとログイン
+1. GCP → [API とサービス] → [認証情報] → **OAuth クライアント ID** を *デスクトップ アプリ* タイプで作成。
+2. 生成された `client_secret.json` をプロジェクト直下に配置。
+3. 以下コマンドで **プロジェクトスコープ** でログインします。
+```bash
+$ clasp login --creds client_secret.json --use-project-scopes --user gcp
+```
+
+### 12.4 API 実行可能デプロイの作成
+```bash
+# 1) 新しいバージョンを確定
+$ clasp create-version "initial api exec"
+# 出力された Version Number を控える (例: 1)
+
+# 2) API_EXECUTABLE のデプロイを作成
+$ clasp create-deployment \
+    --versionNumber 1 \
+    --description "api exec v1"
+```
+
+### 12.5 トリガーを再設定
+```bash
+# 最新 push コード(devモード)で即実行
+$ clasp run-function setupZoomTriggers -p '[]' --user gcp
+
+# デプロイ版で実行したい場合は --nondev を付与
+# $ clasp run-function setupZoomTriggers --nondev -p '[]' --user gcp
+```
+
+> 実行ログで「以下のZoom録音取得トリガーを設定しました：…」が返れば成功です。
 
 ---
 

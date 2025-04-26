@@ -8,7 +8,7 @@
  * スクリプトプロパティ
  *   WEBHOOK_TOKEN     : Zoom Marketplace の Event Subscription で設定した Secret Token
  */
-function doPost(e) {
+function handleZoomWebhook(e) {
   try {
     var secret = PropertiesService.getScriptProperties().getProperty('WEBHOOK_TOKEN');
     if (!secret) {
@@ -55,5 +55,23 @@ function doPost(e) {
     // 例外時も 200 を返して Zoom 側のリトライループを防止
     Logger.log('[ZoomWebhookReceiver] Error: ' + err);
     return ContentService.createTextOutput('error').setMimeType(ContentService.MimeType.TEXT);
+  }
+}
+
+function doPost(e) {
+  // Webアプリのエントリポイント
+  return handleZoomWebhook(e);
+}
+
+// Zoom の URL 検証 (GET) 用。200 OK を返すだけ。
+function doGet(e) {
+  try {
+    console.log('★ doGet 呼ばれたよ');
+    return ContentService.createTextOutput('ping')
+      .setMimeType(ContentService.MimeType.TEXT);
+  } catch (err) {
+    console.error(err);
+    return ContentService.createTextOutput('Error: ' + err)
+      .setMimeType(ContentService.MimeType.TEXT);
   }
 } 
