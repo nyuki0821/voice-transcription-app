@@ -1,0 +1,14 @@
+{
+  "name": "zoom-webhook-handler",
+  "version": "1.0.0",
+  "description": "Zoom Webhook → Sheets relay",
+  "main": "index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.3.0",
+    "googleapis": "^126.0.0"
+  }
+}

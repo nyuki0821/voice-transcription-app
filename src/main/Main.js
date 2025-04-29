@@ -199,10 +199,13 @@ function processBatch() {
       return '処理対象ファイルはありませんでした。';
     }
 
-    // ファイル処理
+    // ファイル処理トラッキング
     var results = {
-      success: 0,
-      error: 0,
+      total: files.length,      // 対象ファイル総数
+      processed: 0,             // 処理試行数 
+      success: 0,               // 成功数
+      error: 0,                 // エラー数
+      skipped: 0,               // スキップ数
       details: []
     };
 
@@ -272,6 +275,8 @@ function processBatch() {
         // ファイルを完了フォルダに移動
         FileProcessor.moveFileToFolder(file, localSettings.COMPLETED_FOLDER_ID);
 
+        // 処理カウント更新
+        results.processed++;
         // 処理結果を記録
         results.success++;
         results.details.push({
@@ -293,6 +298,8 @@ function processBatch() {
           Logger.log('ファイルの移動中にエラー: ' + moveError.toString());
         }
 
+        // 処理カウント更新
+        results.processed++;
         // 処理結果を記録
         results.error++;
         results.details.push({
@@ -310,7 +317,12 @@ function processBatch() {
     var endTime = new Date();
     var processingTime = (endTime - startTime) / 1000; // 秒単位
 
-    var summary = '処理完了: ' + results.success + '件成功, ' + results.error + '件エラー, 処理時間: ' + processingTime + '秒';
+    var summary = '文字起こし処理完了: ' +
+      '対象=' + results.total + '件, ' +
+      '処理=' + results.processed + '件, ' +
+      '成功=' + results.success + '件, ' +
+      '失敗=' + results.error + '件, ' +
+      '処理時間=' + processingTime + '秒';
     Logger.log(summary);
 
     return summary;
@@ -455,9 +467,9 @@ function processBatchOnSchedule() {
       PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'false');
     }
 
-    return '業務時間外のため処理をスキップしました。';
+    return '【文字起こし】業務時間外（' + hour + '時, 7-22時間のみ稼働）のため処理をスキップしました。';
   } else {
-    return '処理フラグが無効のため処理をスキップしました。';
+    return '【文字起こし】処理フラグが無効のため処理をスキップしました。処理を開始するには startDailyProcess() を実行してください。';
   }
 }
 

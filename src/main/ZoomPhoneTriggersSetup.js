@@ -80,7 +80,11 @@ function checkAndFetchZoomRecordings() {
       Logger.log("取得結果: " + JSON.stringify(result));
 
       handleProcessingResult(result, "定期取得");
-      return "定期取得が完了しました。取得件数: " + (result.saved || 0) + "件";
+      // より詳細な結果を返す
+      return "Zoom録音定期取得完了: " +
+        "API取得=" + (result.fetched || 0) + "件, " +
+        "保存済=" + (result.saved || 0) + "件, " +
+        "期間=過去2時間";
     } catch (error) {
       logAndNotifyError(error, "定期取得");
       return "エラーが発生しました: " + error.toString();
@@ -126,7 +130,12 @@ function fetchZoomRecordingsMorningBatch() {
     Logger.log("取得結果: " + JSON.stringify(result));
 
     handleProcessingResult(result, "夜間バッチ");
-    return "夜間バッチが完了しました。取得件数: " + (result.saved || 0) + "件";
+
+    // より詳細な結果を返す
+    return "Zoom録音夜間バッチ完了: " +
+      "API取得=" + (result.fetched || 0) + "件, " +
+      "保存済=" + (result.saved || 0) + "件, " +
+      "期間=前日22時〜当日7時";
   } catch (error) {
     logAndNotifyError(error, "夜間バッチ");
     return "エラーが発生しました: " + error.toString();
@@ -162,7 +171,12 @@ function fetchZoomRecordingsWeekendBatch() {
       Logger.log("取得結果: " + JSON.stringify(result));
 
       handleProcessingResult(result, "週末バッチ");
-      return "週末バッチが完了しました。取得件数: " + (result.saved || 0) + "件";
+
+      // より詳細な結果を返す
+      return "Zoom録音週末バッチ完了: " +
+        "API取得=" + (result.fetched || 0) + "件, " +
+        "保存済=" + (result.saved || 0) + "件, " +
+        "期間=金曜21時〜月曜9時";
     } catch (error) {
       logAndNotifyError(error, "週末バッチ");
       return "エラーが発生しました: " + error.toString();
@@ -179,7 +193,7 @@ function fetchZoomRecordingsWeekendBatch() {
  */
 function fetchZoomRecordingsManually(hours) {
   try {
-    var hoursToFetch = hours || 48; // デフォルト48時間
+    var hoursToFetch = hours || 1; // デフォルト48時間
 
     // 指定時間前から現在までの録音を取得
     var now = new Date();
@@ -194,8 +208,15 @@ function fetchZoomRecordingsManually(hours) {
     // 処理実行と結果取得
     var result = ZoomphoneProcessor.processRecordings(fromDate, toDate);
 
+    // 結果を詳細ログに記録
+    Logger.log("取得結果: " + JSON.stringify(result));
     handleProcessingResult(result, "手動取得(過去" + hoursToFetch + "時間)");
-    return "手動取得が完了しました。取得件数: " + (result.saved || 0) + "件";
+
+    // より詳細な結果を返す
+    return "Zoom録音手動取得完了: " +
+      "API取得=" + (result.fetched || 0) + "件, " +
+      "保存済=" + (result.saved || 0) + "件, " +
+      "期間=" + hoursToFetch + "時間";
   } catch (error) {
     logAndNotifyError(error, "手動取得");
     return "エラーが発生しました: " + error.toString();

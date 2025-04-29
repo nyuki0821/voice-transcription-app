@@ -19,11 +19,12 @@ var ZoomphoneProcessor = (function () {
       fromDate = fromDate || new Date(now.getTime() - 24 * 60 * 60 * 1000);
       toDate = toDate || now;
 
-      var page = 1, saved = 0;
+      var page = 1, saved = 0, fetched = 0;
       while (true) {
         var res = ZoomphoneService.listCallRecordings(fromDate, toDate, page, 30);
         Utilities.sleep(200); // Zoom API rate limit 対策
         var recs = res.recordings || [];
+        fetched += recs.length;
         if (recs.length === 0) break;
 
         recs.forEach(function (rec) {
@@ -52,7 +53,7 @@ var ZoomphoneProcessor = (function () {
         page++;
       }
 
-      return { success: true, saved: saved };
+      return { success: true, fetched: fetched, saved: saved };
     } catch (e) {
       return { success: false, error: e.toString() };
     }
