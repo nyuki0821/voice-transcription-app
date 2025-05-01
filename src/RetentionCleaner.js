@@ -9,11 +9,11 @@
 function purgeOldRecordings() {
   try {
     // 保持日数を取得（デフォルト 90 日）
-    var days = Number(PropertiesService.getScriptProperties().getProperty('RETENTION_DAYS') || 90);
+    var days = Number(EnvironmentConfig.get('RETENTION_DAYS', 90));
     if (isNaN(days) || days <= 0) days = 90;
 
     // 対象フォルダ
-    var folderId = PropertiesService.getScriptProperties().getProperty('SOURCE_FOLDER_ID');
+    var folderId = EnvironmentConfig.get('SOURCE_FOLDER_ID', '');
     if (!folderId) throw new Error('SOURCE_FOLDER_ID が未設定です');
 
     var threshold = Date.now() - days * 24 * 60 * 60 * 1000; // ミリ秒

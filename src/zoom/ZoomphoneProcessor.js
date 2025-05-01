@@ -66,7 +66,7 @@ var ZoomphoneProcessor = (function () {
 
   /** 処理済み ID を取得 */
   function getProcessedCallIds() {
-    var str = PropertiesService.getScriptProperties().getProperty('PROCESSED_CALL_IDS');
+    var str = EnvironmentConfig.get('PROCESSED_CALL_IDS', '');
     return str ? JSON.parse(str) : [];
   }
 
@@ -81,7 +81,7 @@ var ZoomphoneProcessor = (function () {
   /** 処理済みIDをスプレッドシートに記録する */
   function logProcessedIdToSheet(id) {
     try {
-      var spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+      var spreadsheetId = EnvironmentConfig.get('SPREADSHEET_ID', '');
       if (!spreadsheetId) return;
 
       var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
@@ -109,18 +109,11 @@ var ZoomphoneProcessor = (function () {
 
   /** モジュール設定を読み込む */
   function loadModuleSettings() {
-    if (typeof getSystemSettings === 'function') {
-      return getSystemSettings();
-    }
-    var key = 'ZOOMPHONE_SETTINGS';
-    var sp = PropertiesService.getScriptProperties();
-    var raw = sp.getProperty(key);
-    if (raw) {
-      try { return JSON.parse(raw); } catch (e) { /* ignore */ }
-    }
-    var def = { SOURCE_FOLDER_ID: '', PROCESSED_IDS_PROP: 'PROCESSED_CALL_IDS' };
-    sp.setProperty(key, JSON.stringify(def));
-    return def;
+    var config = EnvironmentConfig.getConfig();
+    return {
+      SOURCE_FOLDER_ID: config.SOURCE_FOLDER_ID || '',
+      PROCESSED_IDS_PROP: 'PROCESSED_CALL_IDS'
+    };
   }
 
   /** 追加の継続トリガーを設定する（最短で1分後実行） */

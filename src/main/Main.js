@@ -4,81 +4,35 @@
  */
 
 // グローバル変数
-var SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+var SPREADSHEET_ID = EnvironmentConfig.get('SPREADSHEET_ID', '');
 var settings = getSystemSettings();
 var NOTIFICATION_HOURS = [9, 12, 19]; // 通知を送信する時間（9時、12時、19時）
 
 /**
- * システム設定を直接スプレッドシートから取得する関数
- * グローバル変数に依存せず、常に新しいインスタンスを返す
+ * システム設定を取得する関数
+ * 環境設定ファイルから一元的に取得
  */
 function getSystemSettings() {
   try {
-    // スプレッドシートIDをスクリプトプロパティから取得
-    var spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-    if (!spreadsheetId) {
-      Logger.log('SPREADSHEET_IDが設定されていません。');
-      return getDefaultSettings();
-    }
-
-    // スプレッドシートを開く
-    var spreadsheet;
-    try {
-      spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    } catch (e) {
-      Logger.log('スプレッドシートを開けませんでした: ' + e);
-      return getDefaultSettings();
-    }
-
-    // システム設定シートを取得
-    var settingsSheet = spreadsheet.getSheetByName('システム設定');
-    if (!settingsSheet) {
-      Logger.log('システム設定シートが見つかりません。');
-      return getDefaultSettings();
-    }
-
-    // 設定データを読み込む
-    var settingsData;
-    try {
-      settingsData = settingsSheet.getDataRange().getValues();
-    } catch (e) {
-      Logger.log('設定データの読み込みに失敗しました: ' + e);
-      return getDefaultSettings();
-    }
-
-    // 設定マップを作成
-    var settingsMap = {};
-    for (var i = 1; i < settingsData.length; i++) {
-      if (settingsData[i].length >= 2) {
-        var key = String(settingsData[i][0] || '').trim();
-        var value = settingsData[i][1];
-
-        if (key) {
-          settingsMap[key] = value;
-        }
-      }
-    }
-
-    // 管理者メールアドレスを処理
-    var adminEmails = [];
-    if (settingsMap['ADMIN_EMAIL']) {
-      var emailStr = String(settingsMap['ADMIN_EMAIL']);
-      adminEmails = emailStr.split(',')
-        .map(function (email) { return email.trim(); })
-        .filter(function (email) { return email !== ''; });
-    }
+    // 環境設定を取得
+    var config = EnvironmentConfig.getConfig();
 
     // 結果オブジェクトを構築
     return {
-      ASSEMBLYAI_API_KEY: settingsMap['ASSEMBLYAI_API_KEY'] || '',
-      OPENAI_API_KEY: settingsMap['OPENAI_API_KEY'] || '',
-      SOURCE_FOLDER_ID: settingsMap['SOURCE_FOLDER_ID'] || '',
-      PROCESSING_FOLDER_ID: settingsMap['PROCESSING_FOLDER_ID'] || '',
-      COMPLETED_FOLDER_ID: settingsMap['COMPLETED_FOLDER_ID'] || '',
-      ERROR_FOLDER_ID: settingsMap['ERROR_FOLDER_ID'] || '',
-      ADMIN_EMAILS: adminEmails,
-      MAX_BATCH_SIZE: parseInt(settingsMap['MAX_BATCH_SIZE'] || '10', 10),
-      ENHANCE_WITH_OPENAI: settingsMap['ENHANCE_WITH_OPENAI'] !== false
+      ASSEMBLYAI_API_KEY: config.ASSEMBLYAI_API_KEY || '',
+      OPENAI_API_KEY: config.OPENAI_API_KEY || '',
+      SOURCE_FOLDER_ID: config.SOURCE_FOLDER_ID || '',
+      PROCESSING_FOLDER_ID: config.PROCESSING_FOLDER_ID || '',
+      COMPLETED_FOLDER_ID: config.COMPLETED_FOLDER_ID || '',
+      ERROR_FOLDER_ID: config.ERROR_FOLDER_ID || '',
+      ADMIN_EMAILS: config.ADMIN_EMAILS || [],
+      MAX_BATCH_SIZE: config.MAX_BATCH_SIZE || 10,
+      ENHANCE_WITH_OPENAI: config.ENHANCE_WITH_OPENAI !== false,
+      ZOOM_CLIENT_ID: config.ZOOM_CLIENT_ID || '',
+      ZOOM_CLIENT_SECRET: config.ZOOM_CLIENT_SECRET || '',
+      ZOOM_ACCOUNT_ID: config.ZOOM_ACCOUNT_ID || '',
+      ZOOM_WEBHOOK_SECRET: config.ZOOM_WEBHOOK_SECRET || '',
+      SPREADSHEET_ID: config.SPREADSHEET_ID || ''
     };
   } catch (error) {
     Logger.log('設定の読み込み中にエラー: ' + error);
@@ -99,7 +53,12 @@ function getDefaultSettings() {
     ERROR_FOLDER_ID: '',
     ADMIN_EMAILS: [],
     MAX_BATCH_SIZE: 10,
-    ENHANCE_WITH_OPENAI: true
+    ENHANCE_WITH_OPENAI: true,
+    ZOOM_CLIENT_ID: '',
+    ZOOM_CLIENT_SECRET: '',
+    ZOOM_ACCOUNT_ID: '',
+    ZOOM_WEBHOOK_SECRET: '',
+    SPREADSHEET_ID: ''
   };
 }
 
@@ -122,7 +81,7 @@ function saveCallRecordToSheet(callData) {
     var formattedTime = dateTimeInfo.formattedTime;
 
     // スプレッドシートIDを取得
-    var spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+    var spreadsheetId = EnvironmentConfig.get('SPREADSHEET_ID', '');
     if (!spreadsheetId) {
       throw new Error('SPREADSHEET_IDが設定されていません');
     }
@@ -436,72 +395,43 @@ function recoverStuckFiles() {
 }
 
 /**
- * スケジュール実行用の処理関数（時間条件付き）
+ * スケジュールされたバッチ処理の実行
  */
 function processBatchOnSchedule() {
-  var now = new Date();
-  var hour = now.getHours();
-
-  // 処理有効フラグを確認
-  var processingEnabled = PropertiesService.getScriptProperties().getProperty('PROCESSING_ENABLED');
-
-  // 7時～22時の間のみ実行かつ処理フラグが有効
-  if (hour >= 7 && hour < 22 && processingEnabled === 'true') {
-    // 処理前に処理中フォルダをチェックし、必要ならリカバリー処理を実行
-    var localSettings = getSystemSettings();
-    if (localSettings.PROCESSING_FOLDER_ID) {
-      var processingFolder = DriveApp.getFolderById(localSettings.PROCESSING_FOLDER_ID);
-      var files = processingFolder.getFiles();
-
-      // 処理中フォルダにファイルがある場合はリカバリー処理を実行
-      if (files.hasNext()) {
-        Logger.log('処理中フォルダに残っているファイルを検出しました。リカバリー処理を実行します。');
-        recoverStuckFiles();
-      }
-    }
-
-    return processBatch();
-  } else if (hour >= 22 || hour < 7) {
-    // 業務時間外の場合は処理フラグをリセット
-    if (hour >= 22) {
-      PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'false');
-    }
-
-    return '【文字起こし】業務時間外（' + hour + '時, 7-22時間のみ稼働）のため処理をスキップしました。';
-  } else {
-    return '【文字起こし】処理フラグが無効のため処理をスキップしました。処理を開始するには startDailyProcess() を実行してください。';
+  var processingEnabled = EnvironmentConfig.get('PROCESSING_ENABLED', 'true');
+  if (processingEnabled !== true && processingEnabled !== 'true') {
+    Logger.log('バッチ処理が無効化されています。スクリプトプロパティ PROCESSING_ENABLED が true でない。');
+    return 'バッチ処理が無効化されています';
   }
-}
 
-/**
- * 1日の処理開始関数（7時に実行）
- */
-function startDailyProcess() {
-  var now = new Date();
-
-  // 7時に処理を開始
-  // 処理開始前に、処理中に残っているファイルがあれば未処理に戻す
-  recoverStuckFiles();
-
-  // スクリプトプロパティに処理開始フラグを設定
-  PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'true');
-
-  // 最初の処理を実行
+  // 処理を実行
   return processBatch();
 }
 
 /**
- * 日次サマリー集計と送信を行う関数
+ * バッチ処理を停止する
+ */
+function stopDailyProcess() {
+  PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'false');
+  return 'バッチ処理を停止しました';
+}
+
+/**
+ * バッチ処理を開始する
+ */
+function startDailyProcess() {
+  PropertiesService.getScriptProperties().setProperty('PROCESSING_ENABLED', 'true');
+  return 'バッチ処理を開始しました';
+}
+
+/**
+ * 日次サマリーをメール送信
  */
 function sendDailySummary() {
   try {
-    // 設定を直接取得 (既存のloadSettings関数に依存しない)
-    var settings = getSystemSettings();
-
-    // スプレッドシートIDを取得
-    var spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+    var spreadsheetId = EnvironmentConfig.get('SPREADSHEET_ID', '');
     if (!spreadsheetId) {
-      return 'SPREADSHEET_IDが設定されていません';
+      throw new Error('SPREADSHEET_ID が設定されていません');
     }
 
     // スプレッドシートを開く

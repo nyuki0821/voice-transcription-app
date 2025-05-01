@@ -124,16 +124,15 @@ var ZoomAPIManager = (function () {
    */
   function loadSettings() {
     try {
-      // 基本設定を取得
-      var settings = getSystemSettings();
-
-      // スクリプトプロパティからの設定読み込み
-      var scriptProperties = PropertiesService.getScriptProperties();
+      // 環境設定から統合された設定を取得
+      var config = EnvironmentConfig.getConfig();
 
       // Zoom API 認証情報を設定
-      settings.ZOOM_CLIENT_ID = settings.ZOOM_CLIENT_ID || scriptProperties.getProperty('ZOOM_CLIENT_ID');
-      settings.ZOOM_CLIENT_SECRET = settings.ZOOM_CLIENT_SECRET || scriptProperties.getProperty('ZOOM_CLIENT_SECRET');
-      settings.ZOOM_ACCOUNT_ID = settings.ZOOM_ACCOUNT_ID || scriptProperties.getProperty('ZOOM_ACCOUNT_ID');
+      var settings = {
+        ZOOM_CLIENT_ID: config.ZOOM_CLIENT_ID || '',
+        ZOOM_CLIENT_SECRET: config.ZOOM_CLIENT_SECRET || '',
+        ZOOM_ACCOUNT_ID: config.ZOOM_ACCOUNT_ID || ''
+      };
 
       return settings;
     } catch (error) {
