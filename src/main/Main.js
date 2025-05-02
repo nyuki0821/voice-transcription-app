@@ -4,7 +4,7 @@
  */
 
 // グローバル変数
-var SPREADSHEET_ID = EnvironmentConfig.get('SPREADSHEET_ID', '');
+var SPREADSHEET_ID = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
 var settings = getSystemSettings();
 var NOTIFICATION_HOURS = [9, 12, 19]; // 通知を送信する時間（9時、12時、19時）
 
@@ -32,7 +32,9 @@ function getSystemSettings() {
       ZOOM_CLIENT_SECRET: config.ZOOM_CLIENT_SECRET || '',
       ZOOM_ACCOUNT_ID: config.ZOOM_ACCOUNT_ID || '',
       ZOOM_WEBHOOK_SECRET: config.ZOOM_WEBHOOK_SECRET || '',
-      SPREADSHEET_ID: config.SPREADSHEET_ID || ''
+      RECORDINGS_SHEET_ID: config.RECORDINGS_SHEET_ID || '',
+      PROCESSED_SHEET_ID: config.PROCESSED_SHEET_ID || '',
+      LOG_SHEET_ID: config.LOG_SHEET_ID || ''
     };
   } catch (error) {
     Logger.log('設定の読み込み中にエラー: ' + error);
@@ -58,7 +60,9 @@ function getDefaultSettings() {
     ZOOM_CLIENT_SECRET: '',
     ZOOM_ACCOUNT_ID: '',
     ZOOM_WEBHOOK_SECRET: '',
-    SPREADSHEET_ID: ''
+    RECORDINGS_SHEET_ID: '',
+    PROCESSED_SHEET_ID: '',
+    LOG_SHEET_ID: ''
   };
 }
 
@@ -81,9 +85,9 @@ function saveCallRecordToSheet(callData) {
     var formattedTime = dateTimeInfo.formattedTime;
 
     // スプレッドシートIDを取得
-    var spreadsheetId = EnvironmentConfig.get('SPREADSHEET_ID', '');
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
     if (!spreadsheetId) {
-      throw new Error('SPREADSHEET_IDが設定されていません');
+      throw new Error('RECORDINGS_SHEET_IDが設定されていません');
     }
 
     var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
@@ -429,9 +433,9 @@ function startDailyProcess() {
  */
 function sendDailySummary() {
   try {
-    var spreadsheetId = EnvironmentConfig.get('SPREADSHEET_ID', '');
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
     if (!spreadsheetId) {
-      throw new Error('SPREADSHEET_ID が設定されていません');
+      throw new Error('RECORDINGS_SHEET_ID が設定されていません');
     }
 
     // スプレッドシートを開く

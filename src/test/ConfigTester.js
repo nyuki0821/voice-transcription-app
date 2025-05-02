@@ -46,7 +46,9 @@ function testGetSpecificConfig() {
 
     // テスト対象の設定キー
     var testKeys = [
-      "SPREADSHEET_ID",
+      "RECORDINGS_SHEET_ID",
+      "PROCESSED_SHEET_ID",
+      "LOG_SHEET_ID",
       "MAX_BATCH_SIZE",
       "ADMIN_EMAILS",
       "ENHANCE_WITH_OPENAI",

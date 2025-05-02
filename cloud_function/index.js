@@ -5,10 +5,10 @@ import functions from '@google-cloud/functions-framework';
 // --- 環境変数 ---------------------------------------------------------
 const {
   ZOOM_WEBHOOK_SECRET = '',   // Zoom Dev Portal で発行した Secret Token
-  SPREADSHEET_ID = '',       // Recordings シートのスプレッドシートID
+  RECORDINGS_SHEET_ID = '',  // Recordings シートのスプレッドシートID（名称変更）
 } = process.env;
 
-if (!ZOOM_WEBHOOK_SECRET || !SPREADSHEET_ID) {
+if (!ZOOM_WEBHOOK_SECRET || !RECORDINGS_SHEET_ID) {
   console.warn('[CF] 環境変数が未設定です');
 }
 
@@ -55,7 +55,7 @@ functions.http('zoomWebhookHandler', async (req, res) => {
       ]];
       const api = await getSheets();
       await api.spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID,
+        spreadsheetId: RECORDINGS_SHEET_ID,
         range: 'Recordings!A:G',
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',

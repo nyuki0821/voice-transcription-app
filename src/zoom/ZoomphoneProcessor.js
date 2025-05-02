@@ -81,7 +81,7 @@ var ZoomphoneProcessor = (function () {
   /** 処理済みIDをスプレッドシートに記録する */
   function logProcessedIdToSheet(id) {
     try {
-      var spreadsheetId = EnvironmentConfig.get('SPREADSHEET_ID', '');
+      var spreadsheetId = EnvironmentConfig.get('PROCESSED_SHEET_ID', '');
       if (!spreadsheetId) return;
 
       var spreadsheet = SpreadsheetApp.openById(spreadsheetId);

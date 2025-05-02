@@ -112,6 +112,12 @@ var EnvironmentConfig = (function () {
    */
   function getDefaultConfig() {
     return {
+      // スプレッドシートID (新設)
+      RECORDINGS_SHEET_ID: '',
+      PROCESSED_SHEET_ID: '',
+      LOG_SHEET_ID: '',
+
+      // 既存互換用
       SPREADSHEET_ID: '',
       ASSEMBLYAI_API_KEY: '',
       OPENAI_API_KEY: '',

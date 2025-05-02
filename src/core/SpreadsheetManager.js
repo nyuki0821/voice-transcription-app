@@ -109,7 +109,7 @@ var SpreadsheetManager = (function () {
   function logProcessing(fileName, status, processStart, processEnd) {
     try {
       // スプレッドシートIDを取得
-      var spreadsheetId = EnvironmentConfig.get('SPREADSHEET_ID', '');
+      var spreadsheetId = EnvironmentConfig.get('LOG_SHEET_ID', '');
       if (!spreadsheetId) {
         return;
       }
