@@ -76,26 +76,46 @@ function loadSettings() {
 /**
  * 通話記録をスプレッドシートに保存する関数
  * @param {Object} callData - 通話データオブジェクト
+ * @param {string} [targetSpreadsheetId] - 保存先のスプレッドシートID（省略時はRECORDINGS_SHEET_ID）
+ * @param {string} [sheetName] - 保存先のシート名（省略時は'通話記録'）
  */
-function saveCallRecordToSheet(callData) {
+function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
   try {
+    // デフォルト値の設定
+    targetSpreadsheetId = targetSpreadsheetId || EnvironmentConfig.get('PROCESSED_SHEET_ID', '');
+    sheetName = sheetName || '通話記録';
+
+    Logger.log('saveCallRecordToSheet開始: ファイル名=' + callData.fileName);
+    Logger.log('保存先スプレッドシートID=' + targetSpreadsheetId);
+    Logger.log('保存先シート名=' + sheetName);
+
     // ファイル名から日付と時間情報を抽出（日本時間に変換）
     var dateTimeInfo = SpreadsheetManager.extractDateTimeFromFileName(callData.fileName);
+    Logger.log('日時抽出結果: ' + JSON.stringify(dateTimeInfo));
+
     var formattedDate = dateTimeInfo.formattedDate;
     var formattedTime = dateTimeInfo.formattedTime;
 
     // スプレッドシートIDを取得
-    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
-    if (!spreadsheetId) {
-      throw new Error('RECORDINGS_SHEET_IDが設定されていません');
+    if (!targetSpreadsheetId) {
+      throw new Error('保存先スプレッドシートIDが設定されていません');
     }
 
-    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    var sheet = spreadsheet.getSheetByName('通話記録');
+    try {
+      var spreadsheet = SpreadsheetApp.openById(targetSpreadsheetId);
+      Logger.log('スプレッドシート取得: 成功 - 名前=' + spreadsheet.getName());
+    } catch (ssError) {
+      Logger.log('スプレッドシート取得エラー: ' + ssError.toString());
+      throw new Error('スプレッドシート取得中にエラー: ' + ssError.toString());
+    }
+
+    var sheet = spreadsheet.getSheetByName(sheetName);
+    Logger.log('シート取得: ' + (sheet ? '成功' : '失敗'));
 
     if (!sheet) {
       // シートが存在しない場合は作成
-      sheet = spreadsheet.insertSheet('通話記録');
+      Logger.log('シートが存在しないため新規作成します: ' + sheetName);
+      sheet = spreadsheet.insertSheet(sheetName);
       // ヘッダー行を設定
       sheet.getRange(1, 1, 1, 12).setValues([
         ['record_id', 'call_date', 'call_time', 'sales_company', 'sales_person', 'customer_company', 'customer_name', 'call_status', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
@@ -105,6 +125,7 @@ function saveCallRecordToSheet(callData) {
     // 最終行の次の行に追加
     var lastRow = sheet.getLastRow();
     var newRow = lastRow + 1;
+    Logger.log('挿入行: ' + newRow);
 
     // record_idをファイル名から抽出した元の時間情報から生成
     var recordId = dateTimeInfo.originalDateTime;
@@ -114,22 +135,37 @@ function saveCallRecordToSheet(callData) {
       recordId,
       formattedDate,
       formattedTime,
-      callData.salesCompany,
-      callData.salesPerson,
-      callData.customerCompany,
-      callData.customerName,
-      callData.callStatus,
-      callData.reasonForRefusal,
-      callData.reasonForAppointment,
-      callData.summary,
-      callData.transcription
+      callData.salesCompany || '',
+      callData.salesPerson || '',
+      callData.customerCompany || '',
+      callData.customerName || '',
+      callData.callStatus || '',
+      callData.reasonForRefusal || '',
+      callData.reasonForAppointment || '',
+      callData.summary || '',
+      callData.transcription || ''
     ];
 
+    Logger.log('挿入データ準備完了: record_id=' + recordId);
+
     // 行を追加
-    sheet.getRange(newRow, 1, 1, rowData.length).setValues([rowData]);
+    try {
+      sheet.getRange(newRow, 1, 1, rowData.length).setValues([rowData]);
+      Logger.log('行の追加に成功しました');
+    } catch (writeError) {
+      Logger.log('行の追加中にエラー: ' + writeError.toString());
+      // エラーをそのまま上位に投げる
+      throw writeError;
+    }
+
+    Logger.log('saveCallRecordToSheet完了');
     return true;
   } catch (error) {
     Logger.log('saveCallRecordToSheet関数でエラー: ' + error.toString());
+    // エラースタックがある場合は出力
+    if (error.stack) {
+      Logger.log('エラースタック: ' + error.stack);
+    }
     throw error;
   }
 }
@@ -193,6 +229,10 @@ function processBatch() {
           localSettings.OPENAI_API_KEY
         );
 
+        // 文字起こし結果のチェック
+        Logger.log('文字起こし結果: 文字数=' + (transcriptionResult.text ? transcriptionResult.text.length : 0));
+        Logger.log('発話数: ' + (transcriptionResult.utterances ? transcriptionResult.utterances.length : 0));
+
         // OpenAI GPT-4o-miniによる情報抽出
         var extractedInfo;
 
@@ -205,6 +245,15 @@ function processBatch() {
           transcriptionResult.utterances,
           localSettings.OPENAI_API_KEY
         );
+
+        // 抽出情報のチェック
+        Logger.log('情報抽出結果: ' + JSON.stringify({
+          salesCompany: extractedInfo.salesCompany,
+          salesPerson: extractedInfo.salesPerson,
+          customerCompany: extractedInfo.customerCompany,
+          callStatus: extractedInfo.callStatus,
+          summaryLength: extractedInfo.summary ? extractedInfo.summary.length : 0
+        }));
 
         // 処理終了時間を取得
         var fileEndTime = new Date();
@@ -225,14 +274,46 @@ function processBatch() {
         };
 
         // 通話記録シートに出力
-        saveCallRecordToSheet(callData);
+        var processedSheetId = localSettings.PROCESSED_SHEET_ID || '';
+        Logger.log('文字起こし結果の保存先: PROCESSED_SHEET_ID=' + processedSheetId);
+        saveCallRecordToSheet(callData, processedSheetId, '通話記録');
 
-        // 処理ログのみに処理時間を記録
+        // ファイル名から録音IDを抽出してみる
+        var recordingId = null;
+        var fileName = file.getName();
+
+        // 複数のUUIDパターンを試す
+        // パターン1: ハイフン区切りのUUID
+        var uuidWithHyphens = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+
+        // パターン2: アンダースコア区切りのUUID
+        var uuidWithUnderscores = fileName.match(/([0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12})/i);
+
+        // パターン3: 連続した32文字の16進数
+        var uuidWithoutSeparator = fileName.match(/_([0-9a-f]{32})[^0-9a-f]/i);
+
+        // どれかにマッチするものを使用
+        if (uuidWithHyphens) {
+          recordingId = uuidWithHyphens[1];
+        } else if (uuidWithUnderscores) {
+          recordingId = uuidWithUnderscores[1];
+        } else if (uuidWithoutSeparator) {
+          recordingId = uuidWithoutSeparator[1];
+        } else {
+          // 最後の手段: ファイル名から _YYYYMMDDHHMMSS_ の後の部分を抽出
+          var lastPartMatch = fileName.match(/_(\d{14})_([0-9a-f]+)\./i);
+          if (lastPartMatch) {
+            recordingId = lastPartMatch[2];
+          }
+        }
+
+        // 処理ログのみに処理時間を記録 (録音IDも含める)
         SpreadsheetManager.logProcessing(
           file.getName(),
           '保存完了',
           fileStartTimeStr,
-          fileEndTimeStr
+          fileEndTimeStr,
+          recordingId
         );
 
         // ファイルを完了フォルダに移動
@@ -271,8 +352,37 @@ function processBatch() {
           message: error.toString()
         });
 
+        // ファイル名から録音IDを抽出してみる
+        var recordingId = null;
+        var fileName = file.getName();
+
+        // 複数のUUIDパターンを試す
+        // パターン1: ハイフン区切りのUUID
+        var uuidWithHyphens = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+
+        // パターン2: アンダースコア区切りのUUID
+        var uuidWithUnderscores = fileName.match(/([0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12})/i);
+
+        // パターン3: 連続した32文字の16進数
+        var uuidWithoutSeparator = fileName.match(/_([0-9a-f]{32})[^0-9a-f]/i);
+
+        // どれかにマッチするものを使用
+        if (uuidWithHyphens) {
+          recordingId = uuidWithHyphens[1];
+        } else if (uuidWithUnderscores) {
+          recordingId = uuidWithUnderscores[1];
+        } else if (uuidWithoutSeparator) {
+          recordingId = uuidWithoutSeparator[1];
+        } else {
+          // 最後の手段: ファイル名から _YYYYMMDDHHMMSS_ の後の部分を抽出
+          var lastPartMatch = fileName.match(/_(\d{14})_([0-9a-f]+)\./i);
+          if (lastPartMatch) {
+            recordingId = lastPartMatch[2];
+          }
+        }
+
         // エラーログに処理時間も記録
-        SpreadsheetManager.logProcessing(file.getName(), 'エラー: ' + error.toString(), fileStartTimeStr, fileEndTimeStr);
+        SpreadsheetManager.logProcessing(file.getName(), 'エラー: ' + error.toString(), fileStartTimeStr, fileEndTimeStr, recordingId);
       }
     }
 
@@ -372,12 +482,42 @@ function recoverStuckFiles() {
         FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
         movedCount++;
 
+        // ファイル名から録音IDを抽出してみる
+        var recordingId = null;
+        var fileName = file.getName();
+
+        // 複数のUUIDパターンを試す
+        // パターン1: ハイフン区切りのUUID
+        var uuidWithHyphens = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+
+        // パターン2: アンダースコア区切りのUUID
+        var uuidWithUnderscores = fileName.match(/([0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12})/i);
+
+        // パターン3: 連続した32文字の16進数
+        var uuidWithoutSeparator = fileName.match(/_([0-9a-f]{32})[^0-9a-f]/i);
+
+        // どれかにマッチするものを使用
+        if (uuidWithHyphens) {
+          recordingId = uuidWithHyphens[1];
+        } else if (uuidWithUnderscores) {
+          recordingId = uuidWithUnderscores[1];
+        } else if (uuidWithoutSeparator) {
+          recordingId = uuidWithoutSeparator[1];
+        } else {
+          // 最後の手段: ファイル名から _YYYYMMDDHHMMSS_ の後の部分を抽出
+          var lastPartMatch = fileName.match(/_(\d{14})_([0-9a-f]+)\./i);
+          if (lastPartMatch) {
+            recordingId = lastPartMatch[2];
+          }
+        }
+
         // 処理ログに記録
         SpreadsheetManager.logProcessing(
           file.getName(),
           'タイムアウトリカバリー：未処理フォルダに戻しました',
           Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'),
-          Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
+          Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'),
+          recordingId
         );
       } catch (moveError) {
         Logger.log('ファイルの移動中にエラー: ' + moveError.toString());
