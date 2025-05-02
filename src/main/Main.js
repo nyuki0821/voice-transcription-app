@@ -76,7 +76,7 @@ function loadSettings() {
 /**
  * 通話記録をスプレッドシートに保存する関数
  * @param {Object} callData - 通話データオブジェクト
- * @param {string} [targetSpreadsheetId] - 保存先のスプレッドシートID（省略時はRECORDINGS_SHEET_ID）
+ * @param {string} [targetSpreadsheetId] - 保存先のスプレッドシートID（省略時はPROCESSED_SHEET_ID）
  * @param {string} [sheetName] - 保存先のシート名（省略時は'call_records'）
  */
 function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
@@ -88,13 +88,6 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
     Logger.log('saveCallRecordToSheet開始: ファイル名=' + callData.fileName);
     Logger.log('保存先スプレッドシートID=' + targetSpreadsheetId);
     Logger.log('保存先シート名=' + sheetName);
-
-    // ファイル名から日付と時間情報を抽出（日本時間に変換）
-    var dateTimeInfo = SpreadsheetManager.extractDateTimeFromFileName(callData.fileName);
-    Logger.log('日時抽出結果: ' + JSON.stringify(dateTimeInfo));
-
-    var formattedDate = dateTimeInfo.formattedDate;
-    var formattedTime = dateTimeInfo.formattedTime;
 
     // スプレッドシートIDを取得
     if (!targetSpreadsheetId) {
@@ -127,14 +120,98 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
     var newRow = lastRow + 1;
     Logger.log('挿入行: ' + newRow);
 
-    // record_idをファイル名から抽出した元の時間情報から生成
-    var recordId = dateTimeInfo.originalDateTime;
+    // メタデータから情報を取得
+    var recordId = '';
+    var callDate = '';
+    var callTime = '';
+
+    // Driveファイルからメタデータを取得する試み
+    var metadataFound = false;
+    try {
+      // ファイル名からファイルを検索
+      var files = DriveApp.getFilesByName(callData.fileName);
+
+      if (files.hasNext()) {
+        var file = files.next();
+        var fileDescription = file.getDescription();
+
+        // ファイルの説明からJSONメタデータを解析
+        if (fileDescription && fileDescription.trim()) {
+          try {
+            var metadata = JSON.parse(fileDescription);
+            Logger.log('ファイルからメタデータを読み込みました: ' + JSON.stringify(metadata));
+
+            // メタデータから録音IDを取得
+            if (metadata.recording_id) {
+              recordId = metadata.recording_id;
+              metadataFound = true;
+            }
+
+            // 開始時間から日付と時間を抽出
+            if (metadata.start_time) {
+              var startTime = new Date(metadata.start_time);
+              // タイムゾーン考慮してフォーマット
+              callDate = Utilities.formatDate(startTime, 'Asia/Tokyo', 'yyyy-MM-dd');
+              callTime = Utilities.formatDate(startTime, 'Asia/Tokyo', 'HH:mm:ss');
+              metadataFound = true;
+            }
+
+            Logger.log('ファイルメタデータから抽出: record_id=' + recordId + ', call_date=' + callDate + ', call_time=' + callTime);
+          } catch (jsonError) {
+            Logger.log('メタデータのJSONパース失敗: ' + jsonError.toString());
+          }
+        }
+      }
+    } catch (fileError) {
+      Logger.log('ファイルメタデータ取得エラー: ' + fileError.toString());
+    }
+
+    // メタデータから日付時刻情報を取得できなかった場合は、現在の日時を使用
+    if (!metadataFound || !callDate || !callTime) {
+      Logger.log('メタデータから日時情報を取得できなかったため、nullを設定します');
+      callDate = null;
+      callTime = null;
+    }
+
+    // ファイル名から録音IDのみを抽出する（日時は抽出しない）
+    if (!recordId) {
+      Logger.log('録音IDがメタデータから取得できなかったため、ファイル名から抽出を試みます');
+      var fileName = callData.fileName;
+
+      // 1. 標準的なZoomファイル名パターン: zoom_call_20250502142159_e2b392d2a16f4e61b4bd348043c8a690.mp3
+      var stdPattern = fileName.match(/zoom_call_\d{14}_([0-9a-f]{32})\.mp3$/i);
+
+      // 2. ハイフン付きUUIDパターン: xxxx_xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.mp3
+      var uuidPattern = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.mp3$/i);
+
+      // 3. その他の16進数ID: xxxx_{hex}
+      var hexPattern = fileName.match(/_([0-9a-f]{16,})\.mp3$/i);
+
+      if (stdPattern && stdPattern[1]) {
+        // 標準パターンマッチ
+        recordId = stdPattern[1];
+        Logger.log('標準パターンから録音ID抽出: ' + recordId);
+      } else if (uuidPattern && uuidPattern[1]) {
+        // UUIDパターンマッチ
+        recordId = uuidPattern[1];
+        Logger.log('UUIDパターンから録音ID抽出: ' + recordId);
+      } else if (hexPattern && hexPattern[1]) {
+        // 16進数パターンマッチ
+        recordId = hexPattern[1];
+        Logger.log('16進数パターンから録音ID抽出: ' + recordId);
+      } else {
+        // どのパターンにもマッチしない場合は新しいUUIDを生成
+        var uuid = Utilities.getUuid();
+        Logger.log('録音ID抽出失敗、UUIDを生成: ' + uuid);
+        recordId = uuid.replace(/-/g, ''); // ハイフンなしの形式に変換
+      }
+    }
 
     // データを配列として準備
     var rowData = [
       recordId,
-      formattedDate,
-      formattedTime,
+      callDate,
+      callTime,
       callData.salesCompany || '',
       callData.salesPerson || '',
       callData.customerCompany || '',
@@ -146,7 +223,7 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       callData.transcription || ''
     ];
 
-    Logger.log('挿入データ準備完了: record_id=' + recordId);
+    Logger.log('挿入データ準備完了: record_id=' + recordId + ', call_date=' + callDate + ', call_time=' + callTime);
 
     // 行を追加
     try {
@@ -300,10 +377,13 @@ function processBatch() {
         } else if (uuidWithoutSeparator) {
           recordingId = uuidWithoutSeparator[1];
         } else {
-          // 最後の手段: ファイル名から _YYYYMMDDHHMMSS_ の後の部分を抽出
-          var lastPartMatch = fileName.match(/_(\d{14})_([0-9a-f]+)\./i);
-          if (lastPartMatch) {
-            recordingId = lastPartMatch[2];
+          // 最後の手段: ファイル名から標準パターンの録音IDを抽出
+          var stdPattern = fileName.match(/zoom_call_\d{14}_([0-9a-f]{32})\.mp3$/i);
+          if (stdPattern && stdPattern[1]) {
+            recordingId = stdPattern[1];
+          } else {
+            // どのパターンにもマッチしない場合はnullのままにする
+            recordingId = null;
           }
         }
 
@@ -374,10 +454,13 @@ function processBatch() {
         } else if (uuidWithoutSeparator) {
           recordingId = uuidWithoutSeparator[1];
         } else {
-          // 最後の手段: ファイル名から _YYYYMMDDHHMMSS_ の後の部分を抽出
-          var lastPartMatch = fileName.match(/_(\d{14})_([0-9a-f]+)\./i);
-          if (lastPartMatch) {
-            recordingId = lastPartMatch[2];
+          // 最後の手段: ファイル名から標準パターンの録音IDを抽出
+          var stdPattern = fileName.match(/zoom_call_\d{14}_([0-9a-f]{32})\.mp3$/i);
+          if (stdPattern && stdPattern[1]) {
+            recordingId = stdPattern[1];
+          } else {
+            // どのパターンにもマッチしない場合はnullのままにする
+            recordingId = null;
           }
         }
 
@@ -504,10 +587,13 @@ function recoverStuckFiles() {
         } else if (uuidWithoutSeparator) {
           recordingId = uuidWithoutSeparator[1];
         } else {
-          // 最後の手段: ファイル名から _YYYYMMDDHHMMSS_ の後の部分を抽出
-          var lastPartMatch = fileName.match(/_(\d{14})_([0-9a-f]+)\./i);
-          if (lastPartMatch) {
-            recordingId = lastPartMatch[2];
+          // 最後の手段: ファイル名から標準パターンの録音IDを抽出
+          var stdPattern = fileName.match(/zoom_call_\d{14}_([0-9a-f]{32})\.mp3$/i);
+          if (stdPattern && stdPattern[1]) {
+            recordingId = stdPattern[1];
+          } else {
+            // どのパターンにもマッチしない場合はnullのままにする
+            recordingId = null;
           }
         }
 
