@@ -605,12 +605,14 @@ function sendDailySummary() {
     var statusIdx = headerRow.indexOf('status');
     var processStartIdx = headerRow.indexOf('process_start');
     var processEndIdx = headerRow.indexOf('process_end');
+    var recordingIdIdx = headerRow.indexOf('recording_id');
 
     // カラム名が異なる場合の対応（日本語/英語両方チェック）
     if (fileNameIdx === -1) fileNameIdx = headerRow.indexOf('ファイル名');
     if (statusIdx === -1) statusIdx = headerRow.indexOf('ステータス');
     if (processStartIdx === -1) processStartIdx = headerRow.indexOf('処理開始');
     if (processEndIdx === -1) processEndIdx = headerRow.indexOf('処理終了');
+    if (recordingIdIdx === -1) recordingIdIdx = headerRow.indexOf('録音ID');
 
     // 処理ログシートのすべてのセルの表示値を取得
     var displayValues = logSheet.getDataRange().getDisplayValues();

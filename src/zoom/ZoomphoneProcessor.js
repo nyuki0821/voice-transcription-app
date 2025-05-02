@@ -89,11 +89,15 @@ var ZoomphoneProcessor = (function () {
 
       if (!sheet) {
         sheet = spreadsheet.insertSheet('processed_ids');
-        sheet.getRange(1, 1, 1, 2).setValues([
-          ['timestamp', 'recording_id']
+        sheet.getRange(1, 1, 1, 6).setValues([
+          ['timestamp', 'recording_id', 'call_datetime', 'duration_seconds', 'caller_number', 'called_number']
         ]);
-        sheet.setColumnWidth(1, 180);
-        sheet.setColumnWidth(2, 300);
+        sheet.setColumnWidth(1, 180); // timestamp
+        sheet.setColumnWidth(2, 300); // recording_id
+        sheet.setColumnWidth(3, 180); // call_datetime
+        sheet.setColumnWidth(4, 120); // duration_seconds
+        sheet.setColumnWidth(5, 150); // caller_number
+        sheet.setColumnWidth(6, 150); // called_number
       }
 
       var now = new Date();

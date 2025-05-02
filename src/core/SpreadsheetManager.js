@@ -179,8 +179,15 @@ var SpreadsheetManager = (function () {
         sheet = spreadsheet.insertSheet('processing_log');
         // ヘッダー行を設定
         sheet.getRange(1, 1, 1, 6).setValues([
-          ['timestamp', 'file_id', 'file_name', 'status', 'process_start', 'process_end']
+          ['timestamp', 'recording_id', 'file_name', 'status', 'process_start', 'process_end']
         ]);
+        // カラム幅を設定
+        sheet.setColumnWidth(1, 180); // timestamp
+        sheet.setColumnWidth(2, 300); // recording_id
+        sheet.setColumnWidth(3, 250); // file_name
+        sheet.setColumnWidth(4, 150); // status
+        sheet.setColumnWidth(5, 180); // process_start
+        sheet.setColumnWidth(6, 180); // process_end
       }
 
       // 最終行の次の行に追加
@@ -234,12 +241,12 @@ var SpreadsheetManager = (function () {
 
       // データを配列として準備
       var rowData = [
-        formattedDateTime,
-        extractedRecordingId || '',  // 録音ID（抽出できなければ空文字）
-        fileName,
-        status,
-        startTime,
-        endTime
+        formattedDateTime,      // timestamp
+        extractedRecordingId || '',  // recording_id（抽出できなければ空文字）
+        fileName,               // file_name
+        status,                 // status
+        startTime,              // process_start
+        endTime                 // process_end
       ];
 
       // 行を追加
