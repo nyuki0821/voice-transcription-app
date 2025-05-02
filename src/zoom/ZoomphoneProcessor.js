@@ -81,16 +81,16 @@ var ZoomphoneProcessor = (function () {
   /** 処理済みIDをスプレッドシートに記録する */
   function logProcessedIdToSheet(id) {
     try {
-      var spreadsheetId = EnvironmentConfig.get('PROCESSED_SHEET_ID', '');
+      var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
       if (!spreadsheetId) return;
 
       var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-      var sheet = spreadsheet.getSheetByName('処理済みID記録');
+      var sheet = spreadsheet.getSheetByName('processed_ids');
 
       if (!sheet) {
-        sheet = spreadsheet.insertSheet('処理済みID記録');
+        sheet = spreadsheet.insertSheet('processed_ids');
         sheet.getRange(1, 1, 1, 2).setValues([
-          ['処理日時', '録音ID']
+          ['timestamp', 'recording_id']
         ]);
         sheet.setColumnWidth(1, 180);
         sheet.setColumnWidth(2, 300);

@@ -172,14 +172,14 @@ var SpreadsheetManager = (function () {
       }
 
       var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-      var sheet = spreadsheet.getSheetByName('処理ログ');
+      var sheet = spreadsheet.getSheetByName('processing_log');
 
       if (!sheet) {
         // シートが存在しない場合は作成
-        sheet = spreadsheet.insertSheet('処理ログ');
+        sheet = spreadsheet.insertSheet('processing_log');
         // ヘッダー行を設定
         sheet.getRange(1, 1, 1, 6).setValues([
-          ['日時', 'file_id', 'ファイル名', 'ステータス', 'process_start', 'process_end']
+          ['timestamp', 'file_id', 'file_name', 'status', 'process_start', 'process_end']
         ]);
       }
 

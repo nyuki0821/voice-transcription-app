@@ -77,13 +77,13 @@ function loadSettings() {
  * 通話記録をスプレッドシートに保存する関数
  * @param {Object} callData - 通話データオブジェクト
  * @param {string} [targetSpreadsheetId] - 保存先のスプレッドシートID（省略時はRECORDINGS_SHEET_ID）
- * @param {string} [sheetName] - 保存先のシート名（省略時は'通話記録'）
+ * @param {string} [sheetName] - 保存先のシート名（省略時は'call_records'）
  */
 function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
   try {
     // デフォルト値の設定
     targetSpreadsheetId = targetSpreadsheetId || EnvironmentConfig.get('PROCESSED_SHEET_ID', '');
-    sheetName = sheetName || '通話記録';
+    sheetName = sheetName || 'call_records';
 
     Logger.log('saveCallRecordToSheet開始: ファイル名=' + callData.fileName);
     Logger.log('保存先スプレッドシートID=' + targetSpreadsheetId);
@@ -273,10 +273,10 @@ function processBatch() {
           transcription: transcriptionResult.text
         };
 
-        // 通話記録シートに出力
+        // call_recordsシートに出力
         var processedSheetId = localSettings.PROCESSED_SHEET_ID || '';
         Logger.log('文字起こし結果の保存先: PROCESSED_SHEET_ID=' + processedSheetId);
-        saveCallRecordToSheet(callData, processedSheetId, '通話記録');
+        saveCallRecordToSheet(callData, processedSheetId, 'call_records');
 
         // ファイル名から録音IDを抽出してみる
         var recordingId = null;
@@ -573,17 +573,17 @@ function startDailyProcess() {
  */
 function sendDailySummary() {
   try {
-    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+    var spreadsheetId = EnvironmentConfig.get('LOG_SHEET_ID', '');
     if (!spreadsheetId) {
-      throw new Error('RECORDINGS_SHEET_ID が設定されていません');
+      throw new Error('LOG_SHEET_ID が設定されていません');
     }
 
     // スプレッドシートを開く
     var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    var logSheet = spreadsheet.getSheetByName('処理ログ');
+    var logSheet = spreadsheet.getSheetByName('processing_log');
 
     if (!logSheet) {
-      return '処理ログシートが見つかりません';
+      return 'Processing logシートが見つかりません';
     }
 
     // 現在の日付を取得
@@ -596,7 +596,7 @@ function sendDailySummary() {
     // ヘッダー行とカラムインデックスを特定
     var allData = logSheet.getDataRange().getValues();
     if (allData.length <= 1) {
-      return '処理ログシートにデータがありません';
+      return 'Processing logシートにデータがありません';
     }
 
     var headerRow = allData[0];
@@ -606,7 +606,7 @@ function sendDailySummary() {
     var processStartIdx = headerRow.indexOf('process_start');
     var processEndIdx = headerRow.indexOf('process_end');
 
-    // カラム名が異なる場合の対応
+    // カラム名が異なる場合の対応（日本語/英語両方チェック）
     if (fileNameIdx === -1) fileNameIdx = headerRow.indexOf('ファイル名');
     if (statusIdx === -1) statusIdx = headerRow.indexOf('ステータス');
     if (processStartIdx === -1) processStartIdx = headerRow.indexOf('処理開始');

@@ -10,8 +10,8 @@ var EnvironmentConfig = (function () {
   // キャッシュの有効期限（30分）
   var CACHE_VALIDITY_MS = 30 * 60 * 1000;
 
-  // 環境設定シート名
-  var CONFIG_SHEET_NAME = '環境設定';
+  // settingsシート名
+  var CONFIG_SHEET_NAME = 'settings';
 
   /**
    * 環境変数の設定を取得する
@@ -30,25 +30,25 @@ var EnvironmentConfig = (function () {
       // スプレッドシートIDを取得
       var configSpreadsheetId = getConfigSpreadsheetId();
       if (!configSpreadsheetId) {
-        throw new Error('環境設定スプレッドシートIDが設定されていません');
+        throw new Error('設定スプレッドシートIDが設定されていません');
       }
 
       // スプレッドシートを開く
       var spreadsheet = SpreadsheetApp.openById(configSpreadsheetId);
       if (!spreadsheet) {
-        throw new Error('環境設定スプレッドシートを開けませんでした');
+        throw new Error('設定スプレッドシートを開けませんでした');
       }
 
-      // 環境設定シートを取得
+      // settingsシートを取得
       var configSheet = spreadsheet.getSheetByName(CONFIG_SHEET_NAME);
       if (!configSheet) {
-        throw new Error('環境設定シートが見つかりません');
+        throw new Error('settingsシートが見つかりません');
       }
 
       // 設定データを読み込む
       var configData = configSheet.getDataRange().getValues();
       if (!configData || configData.length < 2) {
-        throw new Error('環境設定データが見つかりません');
+        throw new Error('設定データが見つかりません');
       }
 
       // 設定マップを作成
