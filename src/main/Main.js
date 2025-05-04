@@ -74,6 +74,98 @@ function loadSettings() {
 }
 
 /**
+ * ファイルからメタデータを抽出する関数
+ * @param {string} fileName - ファイル名
+ * @return {Object} 抽出されたメタデータ
+ */
+function extractMetadataFromFile(fileName) {
+  var result = {
+    recordId: '',
+    callDate: null,
+    callTime: null,
+    salesPhoneNumber: '',
+    customerPhoneNumber: '',
+    metadataFound: false
+  };
+
+  try {
+    // ファイル名からファイルを検索
+    var files = DriveApp.getFilesByName(fileName);
+
+    if (files.hasNext()) {
+      var file = files.next();
+      var fileDescription = file.getDescription();
+
+      // ファイルの説明からJSONメタデータを解析
+      if (fileDescription && fileDescription.trim()) {
+        try {
+          var metadata = JSON.parse(fileDescription);
+          Logger.log('ファイルからメタデータを読み込みました: ' + JSON.stringify(metadata));
+
+          // メタデータから録音IDを取得
+          if (metadata.recording_id) {
+            result.recordId = metadata.recording_id;
+            result.metadataFound = true;
+          }
+
+          // 開始時間から日付と時間を抽出
+          if (metadata.start_time) {
+            var startTime = new Date(metadata.start_time);
+            // タイムゾーン考慮してフォーマット
+            result.callDate = Utilities.formatDate(startTime, 'Asia/Tokyo', 'yyyy-MM-dd');
+            result.callTime = Utilities.formatDate(startTime, 'Asia/Tokyo', 'HH:mm:ss');
+            result.metadataFound = true;
+          }
+
+          // 電話番号情報を取得
+          // 発信者番号（セールスの電話番号）
+          if (metadata.caller && metadata.caller.phone_number) {
+            result.salesPhoneNumber = metadata.caller.phone_number;
+          } else if (metadata.caller_number) {
+            result.salesPhoneNumber = metadata.caller_number;
+          } else if (metadata.from) {
+            result.salesPhoneNumber = metadata.from;
+          }
+
+          // 着信者番号（顧客の電話番号）- 国際電話形式から変換
+          var rawCalledNumber = '';
+          if (metadata.callee && metadata.callee.phone_number) {
+            rawCalledNumber = metadata.callee.phone_number;
+          } else if (metadata.called_number) {
+            rawCalledNumber = metadata.called_number;
+          } else if (metadata.to) {
+            rawCalledNumber = metadata.to;
+          }
+
+          Logger.log('顧客電話番号変換前の値: rawCalledNumber=' + rawCalledNumber);
+
+          // 国際電話形式（+81）から日本の一般的な形式（0XXX）に変換
+          if (rawCalledNumber && rawCalledNumber.indexOf('+81') === 0) {
+            result.customerPhoneNumber = '0' + rawCalledNumber.substring(3);
+            Logger.log('顧客電話番号変換後: +81形式から変換 → ' + result.customerPhoneNumber);
+          } else {
+            result.customerPhoneNumber = rawCalledNumber;
+            Logger.log('顧客電話番号変換後: そのまま使用 → ' + result.customerPhoneNumber);
+          }
+
+          Logger.log('ファイルメタデータから抽出: record_id=' + result.recordId
+            + ', call_date=' + result.callDate
+            + ', call_time=' + result.callTime
+            + ', sales_phone=' + result.salesPhoneNumber
+            + ', customer_phone=' + result.customerPhoneNumber);
+        } catch (jsonError) {
+          Logger.log('メタデータのJSONパース失敗: ' + jsonError.toString());
+        }
+      }
+    }
+  } catch (fileError) {
+    Logger.log('ファイルメタデータ取得エラー: ' + fileError.toString());
+  }
+
+  return result;
+}
+
+/**
  * 通話記録をスプレッドシートに保存する関数
  * @param {Object} callData - 通話データオブジェクト
  * @param {string} [targetSpreadsheetId] - 保存先のスプレッドシートID（省略時はPROCESSED_SHEET_ID）
@@ -110,8 +202,8 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       Logger.log('シートが存在しないため新規作成します: ' + sheetName);
       sheet = spreadsheet.insertSheet(sheetName);
       // ヘッダー行を設定
-      sheet.getRange(1, 1, 1, 12).setValues([
-        ['record_id', 'call_date', 'call_time', 'sales_company', 'sales_person', 'customer_company', 'customer_name', 'call_status', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
+      sheet.getRange(1, 1, 1, 14).setValues([
+        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'sales_person', 'customer_phone_number', 'customer_company', 'customer_name', 'call_status', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
       ]);
     }
 
@@ -120,100 +212,15 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
     var newRow = lastRow + 1;
     Logger.log('挿入行: ' + newRow);
 
-    // メタデータから情報を取得
-    var recordId = '';
-    var callDate = '';
-    var callTime = '';
-
-    // Driveファイルからメタデータを取得する試み
-    var metadataFound = false;
-    try {
-      // ファイル名からファイルを検索
-      var files = DriveApp.getFilesByName(callData.fileName);
-
-      if (files.hasNext()) {
-        var file = files.next();
-        var fileDescription = file.getDescription();
-
-        // ファイルの説明からJSONメタデータを解析
-        if (fileDescription && fileDescription.trim()) {
-          try {
-            var metadata = JSON.parse(fileDescription);
-            Logger.log('ファイルからメタデータを読み込みました: ' + JSON.stringify(metadata));
-
-            // メタデータから録音IDを取得
-            if (metadata.recording_id) {
-              recordId = metadata.recording_id;
-              metadataFound = true;
-            }
-
-            // 開始時間から日付と時間を抽出
-            if (metadata.start_time) {
-              var startTime = new Date(metadata.start_time);
-              // タイムゾーン考慮してフォーマット
-              callDate = Utilities.formatDate(startTime, 'Asia/Tokyo', 'yyyy-MM-dd');
-              callTime = Utilities.formatDate(startTime, 'Asia/Tokyo', 'HH:mm:ss');
-              metadataFound = true;
-            }
-
-            Logger.log('ファイルメタデータから抽出: record_id=' + recordId + ', call_date=' + callDate + ', call_time=' + callTime);
-          } catch (jsonError) {
-            Logger.log('メタデータのJSONパース失敗: ' + jsonError.toString());
-          }
-        }
-      }
-    } catch (fileError) {
-      Logger.log('ファイルメタデータ取得エラー: ' + fileError.toString());
-    }
-
-    // メタデータから日付時刻情報を取得できなかった場合は、現在の日時を使用
-    if (!metadataFound || !callDate || !callTime) {
-      Logger.log('メタデータから日時情報を取得できなかったため、nullを設定します');
-      callDate = null;
-      callTime = null;
-    }
-
-    // ファイル名から録音IDのみを抽出する（日時は抽出しない）
-    if (!recordId) {
-      Logger.log('録音IDがメタデータから取得できなかったため、ファイル名から抽出を試みます');
-      var fileName = callData.fileName;
-
-      // 1. 標準的なZoomファイル名パターン: zoom_call_20250502142159_e2b392d2a16f4e61b4bd348043c8a690.mp3
-      var stdPattern = fileName.match(/zoom_call_\d{14}_([0-9a-f]{32})\.mp3$/i);
-
-      // 2. ハイフン付きUUIDパターン: xxxx_xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.mp3
-      var uuidPattern = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.mp3$/i);
-
-      // 3. その他の16進数ID: xxxx_{hex}
-      var hexPattern = fileName.match(/_([0-9a-f]{16,})\.mp3$/i);
-
-      if (stdPattern && stdPattern[1]) {
-        // 標準パターンマッチ
-        recordId = stdPattern[1];
-        Logger.log('標準パターンから録音ID抽出: ' + recordId);
-      } else if (uuidPattern && uuidPattern[1]) {
-        // UUIDパターンマッチ
-        recordId = uuidPattern[1];
-        Logger.log('UUIDパターンから録音ID抽出: ' + recordId);
-      } else if (hexPattern && hexPattern[1]) {
-        // 16進数パターンマッチ
-        recordId = hexPattern[1];
-        Logger.log('16進数パターンから録音ID抽出: ' + recordId);
-      } else {
-        // どのパターンにもマッチしない場合は新しいUUIDを生成
-        var uuid = Utilities.getUuid();
-        Logger.log('録音ID抽出失敗、UUIDを生成: ' + uuid);
-        recordId = uuid.replace(/-/g, ''); // ハイフンなしの形式に変換
-      }
-    }
-
-    // データを配列として準備
+    // データを配列として準備（新しい順序に合わせる）
     var rowData = [
-      recordId,
-      callDate,
-      callTime,
+      callData.recordId,
+      callData.callDate,
+      callData.callTime,
+      callData.salesPhoneNumber || '',
       callData.salesCompany || '',
       callData.salesPerson || '',
+      callData.customerPhoneNumber || '',
       callData.customerCompany || '',
       callData.customerName || '',
       callData.callStatus || '',
@@ -223,7 +230,7 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       callData.transcription || ''
     ];
 
-    Logger.log('挿入データ準備完了: record_id=' + recordId + ', call_date=' + callDate + ', call_time=' + callTime);
+    Logger.log('挿入データ準備完了: record_id=' + callData.recordId + ', call_date=' + callData.callDate + ', call_time=' + callData.callTime);
 
     // 行を追加
     try {
@@ -336,9 +343,22 @@ function processBatch() {
         var fileEndTime = new Date();
         var fileEndTimeStr = Utilities.formatDate(fileEndTime, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
 
+        // ファイルからメタデータを抽出
+        var metadata = extractMetadataFromFile(file.getName());
+
+        // 必要なメタデータが取得できなかった場合はエラー扱い
+        if (!metadata.recordId) {
+          throw new Error('メタデータから録音IDを取得できませんでした: ' + file.getName());
+        }
+
         // スプレッドシートに書き込み
         var callData = {
           fileName: file.getName(),
+          recordId: metadata.recordId,
+          callDate: metadata.callDate,
+          callTime: metadata.callTime,
+          salesPhoneNumber: metadata.salesPhoneNumber,
+          customerPhoneNumber: metadata.customerPhoneNumber,
           salesCompany: extractedInfo.salesCompany,
           salesPerson: extractedInfo.salesPerson,
           customerCompany: extractedInfo.customerCompany,
@@ -355,45 +375,13 @@ function processBatch() {
         Logger.log('文字起こし結果の保存先: PROCESSED_SHEET_ID=' + processedSheetId);
         saveCallRecordToSheet(callData, processedSheetId, 'call_records');
 
-        // ファイル名から録音IDを抽出してみる
-        var recordingId = null;
-        var fileName = file.getName();
-
-        // 複数のUUIDパターンを試す
-        // パターン1: ハイフン区切りのUUID
-        var uuidWithHyphens = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-
-        // パターン2: アンダースコア区切りのUUID
-        var uuidWithUnderscores = fileName.match(/([0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12})/i);
-
-        // パターン3: 連続した32文字の16進数
-        var uuidWithoutSeparator = fileName.match(/_([0-9a-f]{32})[^0-9a-f]/i);
-
-        // どれかにマッチするものを使用
-        if (uuidWithHyphens) {
-          recordingId = uuidWithHyphens[1];
-        } else if (uuidWithUnderscores) {
-          recordingId = uuidWithUnderscores[1];
-        } else if (uuidWithoutSeparator) {
-          recordingId = uuidWithoutSeparator[1];
-        } else {
-          // 最後の手段: ファイル名から標準パターンの録音IDを抽出
-          var stdPattern = fileName.match(/zoom_call_\d{14}_([0-9a-f]{32})\.mp3$/i);
-          if (stdPattern && stdPattern[1]) {
-            recordingId = stdPattern[1];
-          } else {
-            // どのパターンにもマッチしない場合はnullのままにする
-            recordingId = null;
-          }
-        }
-
         // 処理ログのみに処理時間を記録 (録音IDも含める)
         SpreadsheetManager.logProcessing(
           file.getName(),
           '保存完了',
           fileStartTimeStr,
           fileEndTimeStr,
-          recordingId
+          metadata.recordId
         );
 
         // ファイルを完了フォルダに移動
@@ -432,40 +420,8 @@ function processBatch() {
           message: error.toString()
         });
 
-        // ファイル名から録音IDを抽出してみる
-        var recordingId = null;
-        var fileName = file.getName();
-
-        // 複数のUUIDパターンを試す
-        // パターン1: ハイフン区切りのUUID
-        var uuidWithHyphens = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-
-        // パターン2: アンダースコア区切りのUUID
-        var uuidWithUnderscores = fileName.match(/([0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12})/i);
-
-        // パターン3: 連続した32文字の16進数
-        var uuidWithoutSeparator = fileName.match(/_([0-9a-f]{32})[^0-9a-f]/i);
-
-        // どれかにマッチするものを使用
-        if (uuidWithHyphens) {
-          recordingId = uuidWithHyphens[1];
-        } else if (uuidWithUnderscores) {
-          recordingId = uuidWithUnderscores[1];
-        } else if (uuidWithoutSeparator) {
-          recordingId = uuidWithoutSeparator[1];
-        } else {
-          // 最後の手段: ファイル名から標準パターンの録音IDを抽出
-          var stdPattern = fileName.match(/zoom_call_\d{14}_([0-9a-f]{32})\.mp3$/i);
-          if (stdPattern && stdPattern[1]) {
-            recordingId = stdPattern[1];
-          } else {
-            // どのパターンにもマッチしない場合はnullのままにする
-            recordingId = null;
-          }
-        }
-
         // エラーログに処理時間も記録
-        SpreadsheetManager.logProcessing(file.getName(), 'エラー: ' + error.toString(), fileStartTimeStr, fileEndTimeStr, recordingId);
+        SpreadsheetManager.logProcessing(file.getName(), 'エラー: ' + error.toString(), fileStartTimeStr, fileEndTimeStr, null);
       }
     }
 
