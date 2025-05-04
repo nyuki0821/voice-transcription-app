@@ -462,10 +462,10 @@ function setupTranscriptionTriggers() {
     }
   }
 
-  // 7時にプロセスを開始するトリガー
+  // 6時にプロセスを開始するトリガー
   ScriptApp.newTrigger('startDailyProcess')
     .timeBased()
-    .atHour(7)
+    .atHour(6)
     .nearMinute(0)
     .everyDays(1)
     .create();
@@ -485,8 +485,8 @@ function setupTranscriptionTriggers() {
     .create();
 
   return '文字起こし処理用トリガーを設定しました：\n' +
-    '1. 7時開始トリガー\n' +
-    '2. 10分ごとの処理トリガー\n' +
+    '1. 6時開始トリガー\n' +
+    '2. 10分ごとの処理トリガー（6:00～24:00の間のみ）\n' +
     '3. 18:10の日次サマリートリガー';
 }
 
@@ -584,14 +584,23 @@ function recoverStuckFiles() {
  * スケジュールされたバッチ処理の実行
  */
 function processBatchOnSchedule() {
-  var processingEnabled = EnvironmentConfig.get('PROCESSING_ENABLED', 'true');
-  if (processingEnabled !== true && processingEnabled !== 'true') {
-    Logger.log('バッチ処理が無効化されています。スクリプトプロパティ PROCESSING_ENABLED が true でない。');
-    return 'バッチ処理が無効化されています';
-  }
+  var now = new Date();
+  var hour = now.getHours();
 
-  // 処理を実行
-  return processBatch();
+  // 6:00～24:00の間のみ実行
+  if (hour >= 6 && hour < 24) {
+    var processingEnabled = EnvironmentConfig.get('PROCESSING_ENABLED', 'true');
+    if (processingEnabled !== true && processingEnabled !== 'true') {
+      Logger.log('バッチ処理が無効化されています。スクリプトプロパティ PROCESSING_ENABLED が true でない。');
+      return 'バッチ処理が無効化されています';
+    }
+
+    // 処理を実行
+    return processBatch();
+  } else {
+    // 営業時間外は何もしない
+    return "営業時間外（6:00～24:00以外）のため処理をスキップしました";
+  }
 }
 
 /**
