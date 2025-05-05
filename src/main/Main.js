@@ -654,3 +654,135 @@ function main() {
     return 'エラー発生: ' + error.toString();
   }
 }
+
+/**
+ * 日次処理結果サマリーを手動で送信する関数
+ * 任意のタイミングで実行可能
+ * @param {string} [dateStr] - 日付文字列（YYYY/MM/DD形式）。省略時は本日の日付
+ * @return {string} 実行結果メッセージ
+ */
+function manualSendDailySummary(dateStr) {
+  try {
+    // 日付が指定されていない場合は本日の日付を使用
+    if (!dateStr) {
+      var today = new Date();
+      dateStr = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy/MM/dd');
+    }
+
+    // 日付形式の確認（YYYY/MM/DD形式かチェック）
+    var datePattern = /^\d{4}\/\d{2}\/\d{2}$/;
+    if (!datePattern.test(dateStr)) {
+      throw new Error('日付形式が正しくありません。YYYY/MM/DD形式で指定してください。');
+    }
+
+    Logger.log('指定された日付のサマリーを送信します: ' + dateStr);
+
+    // Recordingsシートから指定日付のデータを集計（関数を直接記述）
+    var summary = calculateSummaryFromSheet(dateStr);
+
+    // 管理者メールアドレスを取得
+    var settings = getSystemSettings();
+    if (settings && settings.ADMIN_EMAILS && settings.ADMIN_EMAILS.length > 0) {
+      // 各管理者にサマリーメールを送信
+      for (var i = 0; i < settings.ADMIN_EMAILS.length; i++) {
+        NotificationService.sendDailyProcessingSummary(
+          settings.ADMIN_EMAILS[i],
+          summary,
+          dateStr
+        );
+      }
+      return dateStr + ' の日次処理サマリーを ' + settings.ADMIN_EMAILS.length + '名の管理者に送信しました。';
+    } else {
+      throw new Error('送信先のメールアドレスが設定されていません。');
+    }
+  } catch (error) {
+    Logger.log('手動サマリー送信中にエラー: ' + error.toString());
+    return 'エラーが発生しました: ' + error.toString();
+  }
+}
+
+/**
+ * Recordingsシートから指定日付の処理結果を集計する
+ * manualSendDailySummary関数用の内部関数
+ * @param {string} dateStr - 日付文字列（YYYY/MM/DD形式）
+ * @return {Object} 集計結果 { success: number, error: number, details: Array }
+ */
+function calculateSummaryFromSheet(dateStr) {
+  try {
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+    if (!spreadsheetId) {
+      return { success: 0, error: 0, details: [] };
+    }
+
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName('Recordings');
+
+    if (!sheet) {
+      Logger.log('Recordingsシートが見つかりません');
+      return { success: 0, error: 0, details: [] };
+    }
+
+    var dataRange = sheet.getDataRange();
+    var values = dataRange.getValues();
+
+    // 集計用変数
+    var summary = {
+      success: 0,
+      error: 0,
+      details: []
+    };
+
+    // 日付のフォーマットを変換（YYYY/MM/DD → YYYY-MM-DD）
+    // シート内の日付がハイフン形式になっているため
+    var formattedDateStr = dateStr.replace(/\//g, '-');
+    Logger.log('検索用に変換した日付: ' + formattedDateStr);
+
+    // ヘッダー行をスキップして2行目から処理
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+
+      // call_date列（4列目）をチェック
+      var callDate = row[3]; // call_date
+
+      // 日付の確認をログ出力
+      Logger.log('レコード #' + (i + 1) + ' の日付: ' + callDate + ' (型: ' + typeof callDate + ')');
+
+      // 日付文字列に変換
+      var rowDateStr = '';
+      if (callDate instanceof Date) {
+        rowDateStr = Utilities.formatDate(callDate, 'Asia/Tokyo', 'yyyy-MM-dd');
+      } else if (typeof callDate === 'string') {
+        // 既に文字列の場合はそのまま使用
+        rowDateStr = callDate;
+      }
+
+      Logger.log('比較する日付: シート=' + rowDateStr + ', 指定=' + formattedDateStr);
+
+      // 指定日付のレコードのみ集計
+      if (rowDateStr === formattedDateStr) {
+        Logger.log('日付一致！レコード #' + (i + 1) + ' を処理します');
+
+        // ステータスに基づいて成功/エラーをカウント
+        var status = row[9]; // status_fetch
+        var transcStatus = row[11]; // status_transcription
+
+        Logger.log('ステータス: fetch=' + status + ', transcription=' + transcStatus);
+
+        // PROCESSEDは常に成功としてカウント
+        if (status === 'PROCESSED') {
+          summary.success++;
+          Logger.log('成功としてカウント');
+        } else if (status === 'ERROR' || (status && status.indexOf('ERROR') === 0)) {
+          summary.error++;
+          Logger.log('エラーとしてカウント');
+        }
+      }
+    }
+
+    Logger.log('集計結果: 成功=' + summary.success + '件, エラー=' + summary.error + '件');
+    return summary;
+  } catch (e) {
+    Logger.log('サマリー集計でエラー: ' + e.toString());
+    return { success: 0, error: 0, details: [] };
+  }
+}
