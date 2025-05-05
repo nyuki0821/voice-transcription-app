@@ -113,7 +113,8 @@ var EnvironmentConfig = (function () {
   function getDefaultConfig() {
     return {
       // スプレッドシートID (新設)
-      RECORDINGS_SHEET_ID: '',
+      RECORDINGS_SHEET_ID: '16wE2ebRsRSXDk0BHXawfziKsp3JDiKueTKOuWvGgJxo', // クラウドファンクションで使用しているスプレッドシートID
+      PROCESSED_IDS_SHEET_ID: '1DzghNXkCgQehZ7IYppoImmKefxCWBQ-tW-UMHIHosiM', // processed_idsシート用のスプレッドシートID
       PROCESSED_SHEET_ID: '',
       LOG_SHEET_ID: '',
 

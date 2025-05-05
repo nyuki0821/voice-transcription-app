@@ -930,3 +930,31 @@ function testNewSendDailySummary() {
     return "テスト中にエラーが発生しました: " + error.toString();
   }
 }
+
+/**
+ * メインエントリーポイント
+ * このスクリプトのデフォルト実行関数
+ */
+function main() {
+  try {
+    Logger.log('メイン処理スタート: ' + new Date().toString());
+
+    // 1. Zoom録音ファイルの取得処理
+    Logger.log('Recordingsシートからの録音ファイル取得処理を開始します（タイムスタンプが古い順に処理）...');
+    var recordingsResult = ZoomphoneProcessor.processRecordingsFromSheet();
+    Logger.log('Recordingsシートからの録音取得結果: ' + JSON.stringify(recordingsResult));
+
+    // 2. メイン処理バッチ（文字起こし、情報抽出）
+    processBatch();
+
+    // 3. レポート集計＆通知
+    checkAndSendNotifications();
+
+    Logger.log('メイン処理完了: ' + new Date().toString());
+    return '処理完了';
+  } catch (error) {
+    // エラーハンドリング
+    handleRuntimeError(error);
+    return 'エラー発生: ' + error.toString();
+  }
+}

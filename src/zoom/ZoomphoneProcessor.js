@@ -84,7 +84,7 @@ var ZoomphoneProcessor = (function () {
    */
   function logProcessedIdToSheet(id, metadata) {
     try {
-      var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+      var spreadsheetId = EnvironmentConfig.get('PROCESSED_IDS_SHEET_ID', '');
       if (!spreadsheetId) return;
 
       var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
@@ -167,6 +167,206 @@ var ZoomphoneProcessor = (function () {
     }
   }
 
+  /**
+   * Recordingsシートから未処理の録音情報を取得して処理する
+   * @param {Date} [fromDate] 取得する開始日時（オプション）- 指定した場合、この時刻以降の録音のみを処理
+   * @param {Date} [toDate] 取得する終了日時（オプション）- 指定した場合、この時刻以前の録音のみを処理
+   * @returns {Object} 処理結果 { success: boolean, fetched: number, saved: number }
+   */
+  function processRecordingsFromSheet(fromDate, toDate) {
+    try {
+      var processStart = new Date().getTime();
+      var settings = loadModuleSettings();
+      var folderId = settings.SOURCE_FOLDER_ID;
+      if (!folderId) throw new Error('SOURCE_FOLDER_ID が未設定です');
+
+      // 時間フィルターの情報をログに記録
+      if (fromDate instanceof Date && toDate instanceof Date) {
+        Logger.log('指定された時間範囲: ' +
+          Utilities.formatDate(fromDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm') + ' 〜 ' +
+          Utilities.formatDate(toDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'));
+      }
+
+      // Recordingsシートから未処理のレコードを取得
+      var pendingRecordings = getRecordingsToProcess(fromDate, toDate);
+      Logger.log('Recordingsシートから取得した未処理録音: ' + pendingRecordings.length + '件');
+
+      var saved = 0, fetched = pendingRecordings.length;
+
+      for (var i = 0; i < pendingRecordings.length; i++) {
+        var rec = pendingRecordings[i];
+        var id = rec.recordingId;
+        var url = rec.downloadUrl;
+
+        if (!id || !url) {
+          Logger.log('録音ID/URLがありません: ' + JSON.stringify(rec));
+          continue;
+        }
+
+        if (getProcessedCallIds().indexOf(id) !== -1) {
+          // 既に処理済みのIDはスキップ
+          Logger.log('既に処理済みのID: ' + id);
+          updateRecordingStatus(rec.rowIndex, 'DUPLICATE');
+          continue;
+        }
+
+        var blob = ZoomphoneService.downloadBlob(url);
+        Utilities.sleep(200); // Zoom API rate limit 対策
+
+        if (!blob) {
+          Logger.log('録音ファイルの取得に失敗: ' + id);
+          updateRecordingStatus(rec.rowIndex, 'DOWNLOAD_ERROR');
+          continue;
+        }
+
+        var recMeta = {
+          id: id,
+          date_time: rec.startTime,
+          duration: rec.duration,
+          caller_number: rec.phoneNumber,
+          direction: 'unknown'
+        };
+
+        var file = ZoomphoneService.saveRecordingToDrive(blob, recMeta, folderId);
+        if (file) {
+          markCallAsProcessed(id);
+          logProcessedIdToSheet(id, recMeta);
+          updateRecordingStatus(rec.rowIndex, 'PROCESSED');
+          saved++;
+        } else {
+          updateRecordingStatus(rec.rowIndex, 'SAVE_ERROR');
+        }
+
+        // 実行時間チェック: 4分を超える前に中断
+        if (new Date().getTime() - processStart > 4 * 60 * 1000) {
+          Logger.log('処理時間制限に達したため中断します。次回トリガーで続きを処理します。');
+          break;
+        }
+      }
+
+      return { success: true, fetched: fetched, saved: saved };
+    } catch (e) {
+      Logger.log('Recordingsシートからの処理でエラー: ' + e.toString());
+      return { success: false, error: e.toString() };
+    }
+  }
+
+  /**
+   * Recordingsシートから未処理(PENDING)の録音情報を取得する
+   * @param {Date} [fromDate] 取得する開始日時（オプション）
+   * @param {Date} [toDate] 取得する終了日時（オプション）
+   * @returns {Array} 未処理の録音情報配列
+   */
+  function getRecordingsToProcess(fromDate, toDate) {
+    try {
+      var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+      if (!spreadsheetId) return [];
+
+      var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+      var sheet = spreadsheet.getSheetByName('Recordings');
+
+      if (!sheet) {
+        Logger.log('Recordingsシートが見つかりません');
+        return [];
+      }
+
+      var dataRange = sheet.getDataRange();
+      var values = dataRange.getValues();
+
+      // ヘッダー行を考慮
+      if (values.length <= 1) {
+        return [];
+      }
+
+      var result = [];
+      var hasTimeFilter = fromDate instanceof Date && toDate instanceof Date;
+      if (hasTimeFilter) {
+        Logger.log('時間範囲フィルターを適用: ' +
+          Utilities.formatDate(fromDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm') + ' 〜 ' +
+          Utilities.formatDate(toDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'));
+      }
+
+      // fromDateとtoDateがJST（Asia/Tokyo）であることを前提とします
+      var fromDateMs = hasTimeFilter ? fromDate.getTime() : 0;
+      var toDateMs = hasTimeFilter ? toDate.getTime() : Number.MAX_SAFE_INTEGER;
+
+      // ヘッダー行をスキップして2行目から処理
+      for (var i = 1; i < values.length; i++) {
+        var row = values[i];
+        // [Timestamp, RecordingId, DownloadUrl, StartTime, PhoneNumber, Duration, Status]
+        if (row[6] === 'PENDING') {
+          var recordTimestamp = row[0]; // Timestamp
+          var recordStartTime = row[3]; // StartTime
+
+          // 時間範囲フィルターがあれば適用
+          if (hasTimeFilter) {
+            // タイムスタンプと開始時間のいずれか有効なものを使用
+            var recordTimeObj = recordStartTime instanceof Date ? recordStartTime :
+              (recordTimestamp instanceof Date ? recordTimestamp : new Date(recordStartTime || recordTimestamp));
+            var recordTimeMs = recordTimeObj.getTime();
+
+            // 指定時間範囲外ならスキップ
+            if (recordTimeMs < fromDateMs || recordTimeMs > toDateMs) {
+              continue;
+            }
+          }
+
+          result.push({
+            rowIndex: i + 1, // スプレッドシートの行番号（1始まり）
+            timestamp: row[0],
+            recordingId: row[1],
+            downloadUrl: row[2],
+            startTime: row[3],
+            phoneNumber: row[4],
+            duration: row[5]
+          });
+        }
+      }
+
+      // timestampが古い順にソートする
+      result.sort(function (a, b) {
+        // timestampが日付オブジェクトの場合
+        if (a.timestamp instanceof Date && b.timestamp instanceof Date) {
+          return a.timestamp.getTime() - b.timestamp.getTime();
+        }
+        // timestampが文字列の場合は日付オブジェクトに変換
+        else {
+          var dateA = new Date(a.timestamp);
+          var dateB = new Date(b.timestamp);
+          return dateA.getTime() - dateB.getTime();
+        }
+      });
+
+      Logger.log('Recordingsシートから取得した未処理録音: ' + result.length + '件、古い順にソート済み');
+      return result;
+    } catch (e) {
+      Logger.log('Recordingsシートの読み取りでエラー: ' + e.toString());
+      return [];
+    }
+  }
+
+  /**
+   * Recordingsシートの録音ステータスを更新する
+   * @param {number} rowIndex シートの行番号（1始まり）
+   * @param {string} status 新しいステータス
+   */
+  function updateRecordingStatus(rowIndex, status) {
+    try {
+      var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+      if (!spreadsheetId) return;
+
+      var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+      var sheet = spreadsheet.getSheetByName('Recordings');
+
+      if (!sheet) return;
+
+      // Statusカラム（G列=7列目）を更新
+      sheet.getRange(rowIndex, 7).setValue(status);
+    } catch (e) {
+      Logger.log('録音ステータスの更新でエラー: ' + e.toString());
+    }
+  }
+
   /** モジュール設定を読み込む */
   function loadModuleSettings() {
     var config = EnvironmentConfig.getConfig();
@@ -228,6 +428,7 @@ var ZoomphoneProcessor = (function () {
   return {
     processRecordings: processRecordings,
     processCallRecordings: processCallRecordings,
+    processRecordingsFromSheet: processRecordingsFromSheet,
     getProcessedCallIds: getProcessedCallIds,
     markCallAsProcessed: markCallAsProcessed,
     logProcessedIdToSheet: logProcessedIdToSheet,
@@ -242,4 +443,13 @@ function continueZoomProcessing() {
   if (typeof ZoomphoneProcessor !== 'undefined' && ZoomphoneProcessor.continueZoomProcessing) {
     ZoomphoneProcessor.continueZoomProcessing();
   }
+}
+
+/**
+ * Recordingsシートの未処理レコードを処理するグローバル関数
+ */
+function processRecordingsFromSheet() {
+  var result = ZoomphoneProcessor.processRecordingsFromSheet();
+  Logger.log('Recordingsシート処理結果: ' + JSON.stringify(result));
+  return result;
 }

@@ -9,33 +9,49 @@
 - OpenAIを使用した会話内容の分析・要約
 - 定期的な通知・レポート機能
 - スプレッドシートへの結果保存
+- クラウドファンクションによるZoom WebhookおよびAPI連携
 
 ## プロジェクト構成
 
 ```
 voice-transcription-app/
-├── FileProcessor.js         # ファイル処理モジュール
-├── InformationExtractor.js  # 情報抽出モジュール
-├── Logger.js                # ロギングモジュール
-├── Main.js                  # メインコントローラー
-├── NotificationService.js   # 通知サービスモジュール
-├── SpreadsheetManager.js    # スプレッドシート操作モジュール
-├── TranscriptionService.js  # 文字起こしサービスモジュール
-├── Utilities.js             # ユーティリティ関数モジュール
-├── ZoomAPIManager.js        # Zoom API管理モジュール
-├── ZoomPhoneTriggersSetup.js # Zoomフォントリガー設定
-├── ZoomphoneProcessor.js    # Zoomフォン処理モジュール
-├── ZoomphoneService.js      # Zoomフォンサービスモジュール
-├── appsscript.json          # AppsScript設定ファイル
-└── test.js                  # テストスクリプト
+├── src/                        # ソースコードディレクトリ
+│   ├── main/                   # メインコントローラー
+│   │   ├── Main.js             # アプリケーションのエントリーポイント
+│   │   └── ZoomPhoneTriggersSetup.js # トリガー設定モジュール
+│   ├── core/                   # コア機能
+│   │   ├── FileProcessor.js    # ファイル処理モジュール
+│   │   ├── Logger.js           # ロギングモジュール
+│   │   ├── NotificationService.js # 通知サービスモジュール
+│   │   ├── SpreadsheetManager.js # スプレッドシート操作モジュール
+│   │   └── Utilities.js        # ユーティリティ関数モジュール
+│   ├── zoom/                   # Zoom関連モジュール
+│   │   ├── ZoomAPIManager.js   # Zoom API管理モジュール
+│   │   ├── ZoomphoneProcessor.js # Zoomフォン処理モジュール
+│   │   └── ZoomphoneService.js # Zoomフォンサービスモジュール
+│   ├── transcription/          # 文字起こし関連モジュール
+│   │   ├── TranscriptionService.js # 文字起こしサービスモジュール
+│   │   └── InformationExtractor.js # 情報抽出モジュール
+│   ├── config/                 # 設定関連
+│   │   └── EnvironmentConfig.js # 環境設定モジュール
+│   ├── RetentionCleaner.js     # データ保持期間管理モジュール
+│   └── appsscript.json         # AppsScript設定ファイル
+├── cloud_function/             # GCPクラウドファンクション
+│   ├── index.js                # Zoom Webhook処理関数
+│   └── package.json            # 依存関係設定
+├── docs/                       # ドキュメント
+│   └── zoom_phone_integration_hybrid.md # セットアップガイド
+└── zoom-webhook-signature-verification.js # Webhookシグネチャ検証ユーティリティ
 ```
 
 ## セットアップ方法
 
 ### 前提条件
 - Google アカウント
+- Google Cloud Platform プロジェクト
 - AssemblyAI APIキー
 - OpenAI APIキー（オプション）
+- Zoom開発者アカウント
 - Clasp CLI（ローカル開発用）
 
 ### インストール手順
@@ -61,7 +77,13 @@ voice-transcription-app/
    npx clasp push
    ```
 
-5. スクリプトのプロパティを設定
+5. クラウドファンクション設定（Zoom Webhook用）
+   ```
+   cd cloud_function
+   gcloud functions deploy zoomWebhook --runtime nodejs18 --trigger-http
+   ```
+
+6. スクリプトのプロパティを設定
    - スクリプトエディタから「プロジェクトの設定」→「スクリプトのプロパティ」
    - 以下のプロパティを設定:
      - `SPREADSHEET_ID`: データ管理用スプレッドシートID
@@ -71,8 +93,8 @@ voice-transcription-app/
 
 1. スプレッドシートの「システム設定」シートでAPI設定と処理設定を行う
 2. トリガーを設定して定期実行（`setupTriggers()`関数を実行）
-3. 指定したGoogleドライブフォルダに音声ファイルを配置
-4. 自動的に文字起こし・分析が実行され結果がスプレッドシートに保存
+3. Zoom Phone APIおよびWebhook連携を設定（詳細は`docs/zoom_phone_integration_hybrid.md`を参照）
+4. 自動的に録音ファイルが処理され、文字起こし・分析が実行され結果がスプレッドシートに保存
 5. 指定時間に処理結果のサマリーがメール通知
 
 ## ライセンス
@@ -83,6 +105,7 @@ ISC
 
 - API使用量と料金に注意してください
 - 個人情報を含む会話の処理には適切なセキュリティ対策を講じてください
+- 長期間のデータ保持には`RetentionCleaner.js`の設定を適切に行ってください
 
 ## ドキュメント
 

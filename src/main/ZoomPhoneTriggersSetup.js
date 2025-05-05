@@ -4,27 +4,18 @@
  */
 function setupZoomTriggers() {
   // 既存のZoom関連のトリガーをすべて削除
-  var triggers = ScriptApp.getProjectTriggers();
-  for (var i = 0; i < triggers.length; i++) {
-    var trigger = triggers[i];
-    var handlerFunction = trigger.getHandlerFunction();
-    if (handlerFunction === 'fetchZoomRecordings' ||
-      handlerFunction === 'fetchZoomRecordingsEvery30Min' ||
-      handlerFunction === 'fetchZoomRecordingsMorningBatch' ||
-      handlerFunction === 'fetchZoomRecordingsWeekendBatch' ||
-      handlerFunction === 'checkAndFetchZoomRecordings' ||
-      handlerFunction === 'purgeOldRecordings') {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  }
+  deleteTriggersWithNameContaining('fetchZoomRecordings');
+  deleteTriggersWithNameContaining('checkAndFetchZoomRecordings');
+  deleteTriggersWithNameContaining('purgeOldRecordings');
+  deleteTriggersWithNameContaining('processRecordingsFromSheet');
 
-  // 1. 30分ごとの定期チェック（時間チェック機能付き）
-  ScriptApp.newTrigger('checkAndFetchZoomRecordings')
+  // 1. Recordingsシート処理の30分ごとのトリガー
+  ScriptApp.newTrigger('processRecordingsFromSheet')
     .timeBased()
     .everyMinutes(30)
     .create();
 
-  // 2. 朝6:15の夜間バッチ処理（前日24時〜当日6時までの録音）- 毎日実行
+  // 2. 朝6:15の夜間バッチ処理 - 毎日実行
   ScriptApp.newTrigger('fetchZoomRecordingsMorningBatch')
     .timeBased()
     .atHour(6)
@@ -32,15 +23,7 @@ function setupZoomTriggers() {
     .everyDays(1)
     .create();
 
-  // 3. 週末バッチ: 月曜9:10 (金曜21時～月曜朝) に実行
-  ScriptApp.newTrigger('fetchZoomRecordingsWeekendBatch')
-    .timeBased()
-    .atHour(9)
-    .nearMinute(10)
-    .everyDays(1) // 月曜チェック処理内で曜日判定
-    .create();
-
-  // 4. リテンションバッチ: 日曜 03:00 に古いファイルを削除
+  // 3. リテンションバッチ: 日曜 03:00 に古いファイルを削除
   ScriptApp.newTrigger('purgeOldRecordings')
     .timeBased()
     .onWeekDay(ScriptApp.WeekDay.SUNDAY)
@@ -49,173 +32,75 @@ function setupZoomTriggers() {
     .create();
 
   return '以下のZoom録音取得トリガーを設定しました：\n' +
-    '1. 定期取得: 30分ごとに実行（毎日6:00～24:00の間のみ処理）\n' +
-    '2. 夜間バッチ: 毎朝6:15（前日24時～当日6時までの録音）\n' +
-    '3. 週末バッチ: 月曜9:10 (金曜21時～月曜朝)\n' +
-    '4. リテンションバッチ: 日曜 03:00 に古いファイルを削除';
+    '1. Recordingsシート処理: 30分ごとに実行\n' +
+    '2. 夜間バッチ: 毎朝6:15\n' +
+    '3. リテンションバッチ: 日曜 03:00 に古いファイルを削除';
 }
 
 /**
- * 30分ごとに実行され、条件に合致する場合のみ録音取得する関数
- * トリガーは30分ごとに実行されるが、実際の処理は平日・休日の6:00～24:00の間のみ
- */
-function checkAndFetchZoomRecordings() {
-  var now = new Date();
-  var hour = now.getHours();
-
-  // 平日・休日問わず6:00～24:00の間のみ実行
-  if (hour >= 6 && hour < 24) {
-    try {
-      // 2時間前の時刻
-      var fromDate = new Date(now.getTime() - (2 * 60 * 60 * 1000));
-      var toDate = new Date(); // 現在時刻
-
-      // 処理実行と結果取得
-      var result = ZoomphoneProcessor.processRecordings(fromDate, toDate);
-
-      // ログ記録
-      Logger.log("定期取得: " + Utilities.formatDate(fromDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm') +
-        " ～ " + Utilities.formatDate(toDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'));
-      Logger.log("取得結果: " + JSON.stringify(result));
-
-      handleProcessingResult(result, "定期取得");
-      // より詳細な結果を返す
-      return "Zoom録音定期取得完了: " +
-        "API取得=" + (result.fetched || 0) + "件, " +
-        "保存済=" + (result.saved || 0) + "件, " +
-        "期間=過去2時間";
-    } catch (error) {
-      logAndNotifyError(error, "定期取得");
-      return "エラーが発生しました: " + error.toString();
-    }
-  } else {
-    // 営業時間外は何もしない（ログも残さない）
-    return "営業時間外（6:00～24:00以外）のため処理をスキップしました";
-  }
-}
-
-/**
- * 定期取得用: 30分ごとに過去2時間分の録音を取得する関数
- * 平日8:45～21:15の間に実行（30分おき）
- * ※この関数は下位互換性のために残しておく
- */
-function fetchZoomRecordingsEvery30Min() {
-  return checkAndFetchZoomRecordings();
-}
-
-/**
- * 夜間バッチ: 前日24時～当日朝6時までの録音を取得する関数
+ * 夜間バッチ: 前日深夜～当日朝までの録音を取得する関数
  * 毎朝6:15に実行（平日・休日問わず）
  */
 function fetchZoomRecordingsMorningBatch() {
   try {
-    var now = new Date();
+    // Recordingsシートから処理を行う
+    Logger.log("夜間バッチ: Recordingsシートからの処理を開始します（タイムスタンプが古い順に処理）");
+    var result = ZoomphoneProcessor.processRecordingsFromSheet();
 
-    // 前日24時 (= 0:00)
-    var fromDate = new Date(now);
-    fromDate.setDate(fromDate.getDate() - 1);
-    fromDate.setHours(24, 0, 0, 0);
-
-    // 当日6時
-    var toDate = new Date(now);
-    toDate.setHours(6, 0, 0, 0);
-
-    // 処理実行と結果取得
-    var result = ZoomphoneProcessor.processRecordings(fromDate, toDate);
-
-    // ログ記録
-    Logger.log("夜間バッチ: " + Utilities.formatDate(fromDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm') +
-      " ～ " + Utilities.formatDate(toDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'));
-    Logger.log("取得結果: " + JSON.stringify(result));
-
-    handleProcessingResult(result, "夜間バッチ");
+    handleProcessingResult(result, "夜間バッチ (Recordingsシート)");
 
     // より詳細な結果を返す
     return "Zoom録音夜間バッチ完了: " +
-      "API取得=" + (result.fetched || 0) + "件, " +
-      "保存済=" + (result.saved || 0) + "件, " +
-      "期間=前日24時〜当日6時";
+      "シートから取得=" + (result.fetched || 0) + "件, " +
+      "保存済=" + (result.saved || 0) + "件";
   } catch (error) {
-    logAndNotifyError(error, "夜間バッチ");
+    logAndNotifyError(error, "夜間バッチ (Recordingsシート)");
     return "エラーが発生しました: " + error.toString();
   }
 }
 
 /**
- * 週末バッチ: 金曜21時～月曜朝までの録音を取得する関数
- * 月曜9:10に実行
- */
-function fetchZoomRecordingsWeekendBatch() {
-  var now = new Date();
-  var day = now.getDay(); // 0(日)～6(土)
-
-  // 月曜日のみ実行
-  if (day === 1) {
-    try {
-      // 先週金曜日の21時
-      var fromDate = new Date(now);
-      fromDate.setDate(fromDate.getDate() - 3); // 3日前=金曜日
-      fromDate.setHours(21, 0, 0, 0);
-
-      // 当日朝
-      var toDate = new Date(now);
-      toDate.setHours(9, 0, 0, 0);
-
-      // 処理実行と結果取得
-      var result = ZoomphoneProcessor.processRecordings(fromDate, toDate);
-
-      // ログ記録
-      Logger.log("週末バッチ: " + Utilities.formatDate(fromDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm') +
-        " ～ " + Utilities.formatDate(toDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'));
-      Logger.log("取得結果: " + JSON.stringify(result));
-
-      handleProcessingResult(result, "週末バッチ");
-
-      // より詳細な結果を返す
-      return "Zoom録音週末バッチ完了: " +
-        "API取得=" + (result.fetched || 0) + "件, " +
-        "保存済=" + (result.saved || 0) + "件, " +
-        "期間=金曜21時〜月曜9時";
-    } catch (error) {
-      logAndNotifyError(error, "週末バッチ");
-      return "エラーが発生しました: " + error.toString();
-    }
-  } else {
-    return "月曜日以外は実行しません";
-  }
-}
-
-/**
- * 過去x時間分の録音を一括取得する手動実行関数
+ * 過去の録音を手動で一括取得する関数
  * 任意のタイミングで実行可能
- * @param {number} hours - 取得する過去の時間（デフォルト48時間）
+ * @param {number} [hours] - 取得する直近の時間（例: 1 = 直近1時間の録音）。省略時は時間フィルタなし
  */
 function fetchZoomRecordingsManually(hours) {
   try {
-    var hoursToFetch = hours || 1; // デフォルト48時間
+    var isTimeFiltered = typeof hours === 'number' && hours > 0;
+    var fromDate, toDate;
 
-    // 指定時間前から現在までの録音を取得
-    var now = new Date();
-    var fromDate = new Date(now.getTime() - (hoursToFetch * 60 * 60 * 1000));
-    var toDate = now;
+    // 時間範囲の設定
+    if (isTimeFiltered) {
+      var now = new Date();
+      fromDate = new Date(now.getTime() - (hours * 60 * 60 * 1000)); // 指定時間前
+      toDate = now; // 現在時刻
 
-    // ログ記録
-    Logger.log("手動取得: 過去" + hoursToFetch + "時間分 " +
-      Utilities.formatDate(fromDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm') +
-      " ～ " + Utilities.formatDate(toDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'));
+      // ログ記録
+      Logger.log("手動取得: 直近" + hours + "時間の録音処理を開始します（" +
+        Utilities.formatDate(fromDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm') + " 〜 " +
+        Utilities.formatDate(toDate, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm') + "）");
+    } else {
+      // ログ記録
+      Logger.log("手動取得: すべての未処理録音を処理します（時間フィルタなし）");
+    }
 
-    // 処理実行と結果取得
-    var result = ZoomphoneProcessor.processRecordings(fromDate, toDate);
+    // Recordingsシートから処理を行う（時間フィルタあり/なし）
+    var result = ZoomphoneProcessor.processRecordingsFromSheet(isTimeFiltered ? fromDate : null, isTimeFiltered ? toDate : null);
 
     // 結果を詳細ログに記録
     Logger.log("取得結果: " + JSON.stringify(result));
-    handleProcessingResult(result, "手動取得(過去" + hoursToFetch + "時間)");
+    handleProcessingResult(result, isTimeFiltered ? "手動取得（直近" + hours + "時間）" : "手動取得（すべて）");
 
     // より詳細な結果を返す
-    return "Zoom録音手動取得完了: " +
-      "API取得=" + (result.fetched || 0) + "件, " +
-      "保存済=" + (result.saved || 0) + "件, " +
-      "期間=" + hoursToFetch + "時間";
+    var resultMsg = "Zoom録音手動取得完了: " +
+      "シートから取得=" + (result.fetched || 0) + "件, " +
+      "保存済=" + (result.saved || 0) + "件";
+
+    if (isTimeFiltered) {
+      resultMsg += ", 期間=直近" + hours + "時間";
+    }
+
+    return resultMsg;
   } catch (error) {
     logAndNotifyError(error, "手動取得");
     return "エラーが発生しました: " + error.toString();
@@ -271,6 +156,76 @@ function logAndNotifyError(error, processType) {
 }
 
 /**
+ * 指定した関数名を含むトリガーを削除するヘルパー関数
+ * @param {string} functionNamePart - 削除対象のトリガーに含まれる関数名の一部
+ */
+function deleteTriggersWithNameContaining(functionNamePart) {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    var trigger = triggers[i];
+    var handlerFunction = trigger.getHandlerFunction();
+    if (handlerFunction.indexOf(functionNamePart) !== -1) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  }
+}
+
+/**
+ * Zoom APIトークンを毎日更新するためのトリガーを設定
+ */
+function setupDailyZoomApiTokenRefresh() {
+  try {
+    deleteTriggersWithNameContaining('refreshZoomAPIToken');
+
+    // 毎日5:00にトークンを更新
+    ScriptApp.newTrigger('refreshZoomAPIToken')
+      .timeBased()
+      .atHour(5)
+      .nearMinute(0)
+      .everyDays(1)
+      .create();
+
+    return "Zoom APIトークン更新トリガーを設定しました（毎日5:00）";
+  } catch (error) {
+    logAndNotifyError(error, "APIトークン更新トリガー設定");
+    return "エラーが発生しました: " + error.toString();
+  }
+}
+
+/**
+ * Recordingsシートの未処理レコードを処理するトリガーを設定する
+ * 30分ごとに実行（平日土日祝日問わず、6:00～24:00の間）
+ */
+function setupRecordingsSheetTrigger() {
+  try {
+    deleteTriggersWithNameContaining('processRecordingsFromSheet');
+
+    // 平日土日祝日問わず30分ごとに実行するシンプルなトリガー
+    ScriptApp.newTrigger('processRecordingsFromSheet')
+      .timeBased()
+      .everyMinutes(30)
+      .create();
+
+    return "Recordingsシート処理トリガーを設定しました（30分ごと）";
+  } catch (error) {
+    logAndNotifyError(error, "Recordingsシートトリガー設定");
+    return "エラーが発生しました: " + error.toString();
+  }
+}
+
+/**
+ * 全てのトリガーをセットアップする
+ */
+function setupAllTriggers() {
+  var results = [
+    setupDailyZoomApiTokenRefresh(),
+    setupRecordingsSheetTrigger()
+  ];
+
+  return results.join("\n");
+}
+
+/**
  * 設定を読み込む関数（既存の関数を使用）
  * この関数が存在しない場合は、Main.gsから読み込む
  */
@@ -293,4 +248,52 @@ function loadSettings() {
     SOURCE_FOLDER_ID: scriptProperties.getProperty('SOURCE_FOLDER_ID') || '',
     ADMIN_EMAILS: adminEmail ? [adminEmail] : []
   };
+}
+
+/**
+ * 直近1時間の録音を取得する便利関数
+ * スクリプトエディタから直接実行可能
+ */
+function fetchLastHourRecordings() {
+  return fetchZoomRecordingsManually(1); // 直近1時間の録音を取得
+}
+
+/**
+ * 直近2時間の録音を取得する便利関数
+ * スクリプトエディタから直接実行可能
+ */
+function fetchLast2HoursRecordings() {
+  return fetchZoomRecordingsManually(2); // 直近2時間の録音を取得
+}
+
+/**
+ * 直近6時間の録音を取得する便利関数
+ * スクリプトエディタから直接実行可能
+ */
+function fetchLast6HoursRecordings() {
+  return fetchZoomRecordingsManually(6); // 直近6時間の録音を取得
+}
+
+/**
+ * 直近24時間（1日）の録音を取得する便利関数
+ * スクリプトエディタから直接実行可能
+ */
+function fetchLast24HoursRecordings() {
+  return fetchZoomRecordingsManually(24); // 直近24時間の録音を取得
+}
+
+/**
+ * 直近48時間（2日）の録音を取得する便利関数
+ * スクリプトエディタから直接実行可能
+ */
+function fetchLast48HoursRecordings() {
+  return fetchZoomRecordingsManually(48); // 直近48時間の録音を取得
+}
+
+/**
+ * すべての未処理録音を取得する便利関数
+ * スクリプトエディタから直接実行可能
+ */
+function fetchAllPendingRecordings() {
+  return fetchZoomRecordingsManually(); // すべての未処理録音を取得
 }
