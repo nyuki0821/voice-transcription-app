@@ -118,33 +118,49 @@ function extractMetadataFromFile(fileName) {
           }
 
           // 電話番号情報を取得
+          // 通話方向の確認
+          var direction = metadata.call_direction || 'unknown';
+
           // 発信者番号（セールスの電話番号）
-          if (metadata.caller && metadata.caller.phone_number) {
-            result.salesPhoneNumber = metadata.caller.phone_number;
-          } else if (metadata.caller_number) {
-            result.salesPhoneNumber = metadata.caller_number;
-          } else if (metadata.from) {
-            result.salesPhoneNumber = metadata.from;
+          if (direction === 'outbound') {
+            // 発信コール：発信者は営業
+            result.salesPhoneNumber = metadata.caller_number || '';
+            result.customerPhoneNumber = metadata.called_number || '';
+          } else if (direction === 'inbound') {
+            // 着信コール：着信者は営業
+            result.customerPhoneNumber = metadata.caller_number || '';
+            result.salesPhoneNumber = metadata.called_number || '';
+          } else {
+            // 通話方向不明の場合は両方の番号を取得してみる
+            if (metadata.caller_number) {
+              result.salesPhoneNumber = metadata.caller_number;
+            }
+
+            if (metadata.called_number) {
+              result.customerPhoneNumber = metadata.called_number;
+            }
+
+            // Recordingsシートから電話番号情報を補完
+            if (result.recordId && (!result.customerPhoneNumber || !result.salesPhoneNumber)) {
+              var phoneNumbers = getPhoneNumbersFromRecordingsSheet(result.recordId);
+              if (phoneNumbers) {
+                if (!result.salesPhoneNumber && phoneNumbers.salesPhoneNumber) {
+                  result.salesPhoneNumber = phoneNumbers.salesPhoneNumber;
+                }
+                if (!result.customerPhoneNumber && phoneNumbers.customerPhoneNumber) {
+                  result.customerPhoneNumber = phoneNumbers.customerPhoneNumber;
+                }
+              }
+            }
           }
 
-          // 着信者番号（顧客の電話番号）- 国際電話形式から変換
-          var rawCalledNumber = '';
-          if (metadata.callee && metadata.callee.phone_number) {
-            rawCalledNumber = metadata.callee.phone_number;
-          } else if (metadata.called_number) {
-            rawCalledNumber = metadata.called_number;
-          } else if (metadata.to) {
-            rawCalledNumber = metadata.to;
-          }
-
-          Logger.log('顧客電話番号変換前の値: rawCalledNumber=' + rawCalledNumber);
+          Logger.log('顧客電話番号変換前の値: rawCalledNumber=' + result.customerPhoneNumber);
 
           // 国際電話形式（+81）から日本の一般的な形式（0XXX）に変換
-          if (rawCalledNumber && rawCalledNumber.indexOf('+81') === 0) {
-            result.customerPhoneNumber = '0' + rawCalledNumber.substring(3);
+          if (result.customerPhoneNumber && result.customerPhoneNumber.indexOf('+81') === 0) {
+            result.customerPhoneNumber = '0' + result.customerPhoneNumber.substring(3);
             Logger.log('顧客電話番号変換後: +81形式から変換 → ' + result.customerPhoneNumber);
           } else {
-            result.customerPhoneNumber = rawCalledNumber;
             Logger.log('顧客電話番号変換後: そのまま使用 → ' + result.customerPhoneNumber);
           }
 
@@ -163,6 +179,47 @@ function extractMetadataFromFile(fileName) {
   }
 
   return result;
+}
+
+/**
+ * Recordingsシートから録音IDに一致する電話番号情報を取得する
+ * @param {string} recordId - 録音ID
+ * @return {Object|null} 電話番号情報 {salesPhoneNumber, customerPhoneNumber} または null
+ */
+function getPhoneNumbersFromRecordingsSheet(recordId) {
+  try {
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+    if (!spreadsheetId) return null;
+
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName('Recordings');
+
+    if (!sheet) {
+      Logger.log('Recordingsシートが見つかりません');
+      return null;
+    }
+
+    var dataRange = sheet.getDataRange();
+    var values = dataRange.getValues();
+
+    // ヘッダー行をスキップして2行目から処理
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      // record_idカラム（1列目）をチェック
+      if (row[0] === recordId) {
+        return {
+          salesPhoneNumber: row[6] || '', // sales_phone_number（7列目）
+          customerPhoneNumber: row[7] || '' // customer_phone_number（8列目）
+        };
+      }
+    }
+
+    Logger.log('録音ID ' + recordId + ' に一致する行がRecordingsシートに見つかりません');
+    return null;
+  } catch (e) {
+    Logger.log('Recordingsシートからの電話番号取得でエラー: ' + e.toString());
+    return null;
+  }
 }
 
 /**
@@ -351,6 +408,10 @@ function processBatch() {
           throw new Error('メタデータから録音IDを取得できませんでした: ' + file.getName());
         }
 
+        // Recordingsシートの文字起こし状態を更新（成功）
+        // 録音IDに一致する行を検索し、文字起こし状態を更新
+        updateTranscriptionStatusByRecordId(metadata.recordId, 'SUCCESS', fileStartTimeStr, fileEndTimeStr);
+
         // スプレッドシートに書き込み
         var callData = {
           fileName: file.getName(),
@@ -403,6 +464,22 @@ function processBatch() {
         var fileEndTime = new Date();
         var fileEndTimeStr = Utilities.formatDate(fileEndTime, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
 
+        // ファイルからメタデータを取得してみる（可能であれば）
+        try {
+          var errorMetadata = extractMetadataFromFile(file.getName());
+          if (errorMetadata && errorMetadata.recordId) {
+            // Recordingsシートの文字起こし状態を更新（エラー）
+            updateTranscriptionStatusByRecordId(
+              errorMetadata.recordId,
+              'ERROR: ' + error.toString().substring(0, 100), // エラーメッセージは短く切り詰める
+              fileStartTimeStr,
+              fileEndTimeStr
+            );
+          }
+        } catch (metaError) {
+          Logger.log('エラー処理中のメタデータ取得に失敗: ' + metaError.toString());
+        }
+
         // ファイルをエラーフォルダに移動
         try {
           FileProcessor.moveFileToFolder(file, localSettings.ERROR_FOLDER_ID);
@@ -442,6 +519,54 @@ function processBatch() {
     var errorMessage = 'バッチ処理エラー: ' + error.toString();
     Logger.log(errorMessage);
     return errorMessage;
+  }
+}
+
+/**
+ * 録音IDに一致するRecordingsシートの行を検索し、文字起こし状態を更新する
+ * @param {string} recordId - 録音ID
+ * @param {string} status - 更新するステータス
+ * @param {string} processStart - 処理開始時間
+ * @param {string} processEnd - 処理終了時間
+ */
+function updateTranscriptionStatusByRecordId(recordId, status, processStart, processEnd) {
+  try {
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+    if (!spreadsheetId) return;
+
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName('Recordings');
+
+    if (!sheet) {
+      Logger.log('Recordingsシートが見つかりません');
+      return;
+    }
+
+    var dataRange = sheet.getDataRange();
+    var values = dataRange.getValues();
+
+    // ヘッダー行をスキップして2行目から処理
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      // record_idカラム（1列目）をチェック
+      if (row[0] === recordId) {
+        var rowIndex = i + 1; // スプレッドシートの行番号（1始まり）
+
+        // ZoomphoneProcessor.updateRecordingStatus関数を使用
+        ZoomphoneProcessor.updateRecordingStatus(rowIndex, status, 'transcription');
+
+        // process_start（13列目）とprocess_end（14列目）を更新
+        if (processStart) sheet.getRange(rowIndex, 13).setValue(processStart);
+        if (processEnd) sheet.getRange(rowIndex, 14).setValue(processEnd);
+
+        Logger.log('文字起こし状態を更新: record_id=' + recordId + ', status=' + status);
+        return;
+      }
+    }
+
+    Logger.log('録音ID ' + recordId + ' に一致する行がRecordingsシートに見つかりません');
+  } catch (e) {
+    Logger.log('文字起こし状態の更新でエラー: ' + e.toString());
   }
 }
 

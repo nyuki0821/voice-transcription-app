@@ -40,6 +40,25 @@ function formatToJST(date) {
   return jstDate.toISOString().replace('T', ' ').substring(0, 19);
 }
 
+/**
+ * ISO形式の日時文字列から日付部分だけを抽出（YYYY-MM-DD形式）
+ * @param {string} isoDateTime - ISO形式の日時文字列
+ * @return {string} - YYYY-MM-DD形式の日付文字列
+ */
+function extractDatePart(isoDateTime) {
+  return isoDateTime.split('T')[0]; // ISO形式（YYYY-MM-DDThh:mm:ss）から日付部分だけ抽出
+}
+
+/**
+ * ISO形式の日時文字列から時間部分だけを抽出（HH:MM:SS形式）
+ * @param {string} isoDateTime - ISO形式の日時文字列
+ * @return {string} - HH:MM:SS形式の時間文字列
+ */
+function extractTimePart(isoDateTime) {
+  const timePart = isoDateTime.split('T')[1];
+  return timePart ? timePart.split('.')[0] : '00:00:00'; // 秒までの部分を抽出
+}
+
 // --- 関数本体 --------------------------------------------------------
 functions.http('zoomWebhookHandler', async (req, res) => {
   if (req.method !== 'POST') {
@@ -134,33 +153,80 @@ functions.http('zoomWebhookHandler', async (req, res) => {
       // 修正：recordings配列の最初の要素を取得
       const recording = p.object?.recordings?.[0] || {};
 
+      // 通話日時を処理（JSTに変換）
+      const callDateTime = formatToJST(recording.date_time);
+      // 日付と時間を分離（「YYYY-MM-DD HH:MM:SS」→「YYYY-MM-DD」と「HH:MM:SS」）
+      const callDate = callDateTime.split(' ')[0];
+      const callTime = callDateTime.split(' ')[1];
+
       // 電話番号を抽出してフォーマット
-      let phoneNumber = recording.direction === 'outbound' ? recording.callee_number : recording.caller_number || '';
+      const direction = recording.direction || 'unknown';
+      let salesPhoneNumber = '';
+      let customerPhoneNumber = '';
+
+      if (direction === 'outbound') {
+        // 発信コール：発信者（営業）と着信者（顧客）
+        salesPhoneNumber = recording.caller_number || '';
+        customerPhoneNumber = recording.callee_number || '';
+      } else if (direction === 'inbound') {
+        // 着信コール：発信者（顧客）と着信者（営業）
+        customerPhoneNumber = recording.caller_number || '';
+        salesPhoneNumber = recording.callee_number || '';
+      } else {
+        // direction が unknown の場合
+        // 少なくとも1つの電話番号を取得できていれば処理
+        if (recording.caller_number && recording.callee_number) {
+          // 両方ある場合は caller を営業、callee を顧客と仮定
+          salesPhoneNumber = recording.caller_number || '';
+          customerPhoneNumber = recording.callee_number || '';
+        } else if (recording.caller_number) {
+          // caller_number のみの場合は営業の電話番号と仮定
+          salesPhoneNumber = recording.caller_number || '';
+          // 顧客番号は不明のため空文字
+        } else if (recording.callee_number) {
+          // callee_number のみの場合は顧客の電話番号と仮定
+          customerPhoneNumber = recording.callee_number || '';
+        }
+
+        // ログに記録
+        console.log('[CF] 通話方向不明: caller=' + recording.caller_number +
+          ', callee=' + recording.callee_number +
+          ' → sales=' + salesPhoneNumber +
+          ', customer=' + customerPhoneNumber);
+      }
 
       // 電話番号の国際形式を国内形式に変換
-      if (phoneNumber.startsWith('+81')) {
+      if (customerPhoneNumber.startsWith('+81')) {
         // 日本の電話番号 (+81...) → 0...
-        phoneNumber = '0' + phoneNumber.substring(3);
-      } else if (phoneNumber.startsWith('+')) {
-        // その他の国際電話番号は+を削除するだけ
-        phoneNumber = phoneNumber.substring(1);
+        customerPhoneNumber = '0' + customerPhoneNumber.substring(3);
+      }
+      if (salesPhoneNumber.startsWith('+81')) {
+        // 日本の電話番号 (+81...) → 0...
+        salesPhoneNumber = '0' + salesPhoneNumber.substring(3);
       }
 
       const rows = [[
-        formatToJST(new Date()),            // Timestamp (システム時刻) - 日本時間
-        recording.id || '',                 // RecordingId
-        recording.download_url || '',       // DownloadUrl
-        formatToJST(recording.date_time),   // StartTime (Zoom通話開始時刻) - 日本時間
-        phoneNumber,                        // PhoneNumber (customer_phone_number形式)
-        recording.duration || '',           // Duration
-        'PENDING'                           // Status
+        recording.id || '',                 // record_id
+        formatToJST(new Date()),            // timestamp_recording
+        recording.download_url || '',       // download_url
+        callDate,                           // call_date
+        callTime,                           // call_time
+        recording.duration || '',           // duration
+        salesPhoneNumber,                   // sales_phone_number
+        customerPhoneNumber,                // customer_phone_number
+        '',                                 // timestamp_fetch
+        'PENDING',                          // status_fetch
+        '',                                 // timestamp_transcription
+        '',                                 // status_transcription
+        '',                                 // process_start
+        ''                                  // process_end
       ]];
       console.log('[CF] スプレッドシートに追加するデータ:', rows);
 
       const api = await getSheets();
       await api.spreadsheets.values.append({
         spreadsheetId: RECORDINGS_SHEET_ID,
-        range: 'Recordings!A:G',
+        range: 'Recordings!A:N', // 14列に変更
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: { values: rows },

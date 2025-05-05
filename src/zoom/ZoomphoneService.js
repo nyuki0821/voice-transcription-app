@@ -148,10 +148,22 @@ var ZoomphoneService = (function () {
           start_time: recMeta.start_time || recMeta.date_time || recMeta.created_at || new Date().toISOString(),
           duration: recMeta.duration || recMeta.duration_seconds || 0,
           caller_number: recMeta.caller ? recMeta.caller.phone_number : (recMeta.caller_number || recMeta.from || ''),
-          called_number: recMeta.callee ? recMeta.callee.phone_number : (recMeta.callee_number || recMeta.to || ''),
+          called_number: recMeta.callee_number || (recMeta.callee ? recMeta.callee.phone_number : '') || recMeta.to || '',
           call_direction: recMeta.call_direction || recMeta.direction || '',
           file_name: fileName
         };
+
+        // メタデータのログ出力（デバッグ用）
+        Logger.log('保存するメタデータ: ' + JSON.stringify({
+          original: {
+            id: recMeta.id || '',
+            recording_id: recMeta.recording_id || '',
+            caller_number: recMeta.caller_number || '',
+            callee_number: recMeta.callee_number || '',
+            direction: recMeta.direction || ''
+          },
+          saved: metadataToSave
+        }));
 
         // ファイルの説明にJSONを設定
         file.setDescription(JSON.stringify(metadataToSave));

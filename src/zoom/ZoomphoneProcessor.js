@@ -293,16 +293,17 @@ var ZoomphoneProcessor = (function () {
       // ヘッダー行をスキップして2行目から処理
       for (var i = 1; i < values.length; i++) {
         var row = values[i];
-        // [Timestamp, RecordingId, DownloadUrl, StartTime, PhoneNumber, Duration, Status]
-        if (row[6] === 'PENDING') {
-          var recordTimestamp = row[0]; // Timestamp
-          var recordStartTime = row[3]; // StartTime
+        // 新しい列構成: [record_id, timestamp_recording, download_url, call_date, call_time, duration, sales_phone_number, customer_phone_number, timestamp_fetch, status_fetch, timestamp_transcription, status_transcription, process_start, process_end]
+        // status_fetchカラム（10列目）がPENDINGまたは空のレコードを取得
+        if (!row[9] || row[9] === 'PENDING') {
+          var recordTimestamp = row[1]; // timestamp_recording（2列目）
 
           // 時間範囲フィルターがあれば適用
           if (hasTimeFilter) {
-            // タイムスタンプと開始時間のいずれか有効なものを使用
-            var recordTimeObj = recordStartTime instanceof Date ? recordStartTime :
-              (recordTimestamp instanceof Date ? recordTimestamp : new Date(recordStartTime || recordTimestamp));
+            // タイムスタンプが有効な日付オブジェクトかチェック
+            var recordTimeObj = recordTimestamp instanceof Date ?
+              recordTimestamp :
+              new Date(recordTimestamp || new Date());
             var recordTimeMs = recordTimeObj.getTime();
 
             // 指定時間範囲外ならスキップ
@@ -313,12 +314,12 @@ var ZoomphoneProcessor = (function () {
 
           result.push({
             rowIndex: i + 1, // スプレッドシートの行番号（1始まり）
-            timestamp: row[0],
-            recordingId: row[1],
-            downloadUrl: row[2],
-            startTime: row[3],
-            phoneNumber: row[4],
-            duration: row[5]
+            timestamp: row[1], // timestamp_recording
+            recordingId: row[0], // record_id
+            downloadUrl: row[2], // download_url
+            startTime: new Date(row[3] + ' ' + row[4]), // call_date + call_time
+            phoneNumber: row[6], // sales_phone_number
+            duration: row[5] // duration
           });
         }
       }
@@ -349,8 +350,9 @@ var ZoomphoneProcessor = (function () {
    * Recordingsシートの録音ステータスを更新する
    * @param {number} rowIndex シートの行番号（1始まり）
    * @param {string} status 新しいステータス
+   * @param {string} [statusType='fetch'] ステータスタイプ ('fetch'または'transcription')
    */
-  function updateRecordingStatus(rowIndex, status) {
+  function updateRecordingStatus(rowIndex, status, statusType) {
     try {
       var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
       if (!spreadsheetId) return;
@@ -360,8 +362,24 @@ var ZoomphoneProcessor = (function () {
 
       if (!sheet) return;
 
-      // Statusカラム（G列=7列目）を更新
-      sheet.getRange(rowIndex, 7).setValue(status);
+      // デフォルトはfetchステータス
+      statusType = statusType || 'fetch';
+
+      // タイムスタンプを取得
+      var now = new Date();
+      var timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+
+      if (statusType === 'fetch') {
+        // Status_fetchカラム（10列目）とtimestamp_fetch（9列目）を更新
+        sheet.getRange(rowIndex, 10).setValue(status); // status_fetch
+        sheet.getRange(rowIndex, 9).setValue(timestamp); // timestamp_fetch
+        Logger.log('Fetch状態を更新: 行=' + rowIndex + ', ステータス=' + status);
+      } else if (statusType === 'transcription') {
+        // Status_transcriptionカラム（12列目）とtimestamp_transcription（11列目）を更新
+        sheet.getRange(rowIndex, 12).setValue(status); // status_transcription
+        sheet.getRange(rowIndex, 11).setValue(timestamp); // timestamp_transcription
+        Logger.log('文字起こし状態を更新: 行=' + rowIndex + ', ステータス=' + status);
+      }
     } catch (e) {
       Logger.log('録音ステータスの更新でエラー: ' + e.toString());
     }
@@ -432,6 +450,7 @@ var ZoomphoneProcessor = (function () {
     getProcessedCallIds: getProcessedCallIds,
     markCallAsProcessed: markCallAsProcessed,
     logProcessedIdToSheet: logProcessedIdToSheet,
+    updateRecordingStatus: updateRecordingStatus,
     continueZoomProcessing: _continueZoomProcessing
   };
 })();
