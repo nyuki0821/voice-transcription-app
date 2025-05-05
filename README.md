@@ -1,30 +1,93 @@
 # Voice Transcription App
 
-音声ファイルを文字起こしし、情報を抽出・分析するGoogleAppsScriptアプリケーション。
+Zoom通話録音ファイルを文字起こしし、情報を抽出・分析するGoogleAppsScriptとクラウドファンクションを組み合わせたハイブリッドアプリケーション。
 
 ## 機能概要
 
 - Zoom通話録音ファイルの自動処理
+- Webhookによるリアルタイムメタ情報収集
+- 定期的な録音ファイル取得
 - AssemblyAIを使用した高精度な文字起こし
 - OpenAIを使用した会話内容の分析・要約
-- 定期的な通知・レポート機能
-- スプレッドシートへの結果保存
-- クラウドファンクションによるZoom WebhookおよびAPI連携
+- スプレッドシートへの結果一元管理
 
-## スケジュール
+## アーキテクチャ全体像
 
-- **録音ファイル取得（Fetch）:** 平日・土日祝日問わず6:00~24:00の間、30分ごとに実行
-- **文字起こし処理:** 平日・土日祝日問わず6:00~24:00の間、10分ごとに実行
-- **夜間バッチ処理:** 毎朝6:15に実行
+```mermaid
+flowchart TB
+    Z(Zoom Phone) -->|recording_completed| CF[Cloud Functions<br>(zoom-webhook-handler)]
+    CF --> Sheets[(Google Sheets<br>Recordings)]
+    subgraph GAS Project
+      Trigger30((30 min Trigger)) --> ZP[ZoomphoneProcessor]
+      ZP -->|download & save| GD[(Google Drive<br>録音フォルダ)]
+      Trigger10((10 min Trigger)) --> TP[Transcription Pipeline]
+      GD --> TP
+      TP --> Sheets
+      Retention((Weekly Clean)) --> GD
+    end
+```
 
-## 処理フロー
+| コンポーネント | 主な役割 | 実装/ファイル |
+|---------------|----------|-------------|
+| Cloud Functions | Webhook 受信／署名検証／Sheets 書込 | `index.js` (Node 18) |
+| Google Sheets   | メタ情報一覧 & ログ | `Recordings` シート |
+| GAS: ZoomphoneProcessor | 録音リスト取得 & Drive 保存 | `src/zoom/ZoomphoneProcessor.js` |
+| GAS: ZoomphoneService   | Zoom API 呼び出しヘルパ | `src/zoom/ZoomphoneService.js` |
+| GAS: Main & triggers    | 文字起こし・要約 | `src/main/*.js` |
 
-1. Zoom通話の録音ファイルが生成されると、クラウドファンクションによってRecordingsシートに記録されます
-2. 30分ごとにRecordingsシートに記録された音声ファイルの中から、timestampが直近2時間かつまだ取得していないrecording_idを対象に未処理フォルダへfetchします
-3. 取得（fetch）が完了したものはRecordingsシートのステータス（Status列）を更新します
-4. 10分ごとに最大バッチサイズ10で未処理フォルダにあるファイルを文字起こし処理します
-5. 文字起こし処理に成功したファイルは完了フォルダに移動し、エラーが発生した場合はエラーフォルダに移動します
-6. 文字起こし中に処理が停止した場合、処理中フォルダに残ったファイルは未処理フォルダへ自動的に戻されます
+## スケジュールとフロー別の役割分担
+
+| タイミング | フロー | 実行場所 | 詳細 |
+|------------|--------|----------|------|
+| 録音完了時 即時 | Webhook → メタ記録 | **Cloud Functions** | HMAC 検証 / Sheets へ 1 行追記 (録音 ID, DL URL, 時刻, 電話番号, Duration等) |
+| 30 分おき | 録音ファイル DL | **GAS `checkAndFetchZoomRecordings`** | Zoom API で 直近 2h をリスト → 未取得を Drive 保存 |
+| 10 分おき | 文字起こし & 要約 | **GAS `processBatchOnSchedule`** | AssemblyAI → OpenAI (任意) → Sheets に貼付 |
+| 月曜 09:10 | 週末バッチ | GAS | 金曜 21:00〜月曜 09:00 取得 |
+| 日曜 03:00 | リテンション | GAS | Drive 内 90 日超ファイル削除 |
+
+## ログステータス管理
+
+Recordingsシートは以下のカラムで各ファイルのステータスを一元管理します:
+
+| カラム | 説明 |
+|-------|------|
+| record_id | 一意の録音ID |
+| timestamp_recording | 録音生成日時 |
+| download_url | 録音ファイルURL |
+| call_date | 通話日 |
+| call_time | 通話時間 |
+| duration | 通話時間長 |
+| sales_phone_number | セールス側番号 |
+| customer_phone_number | 顧客側番号 |
+| timestamp_fetch | 取得処理日時 |
+| status_fetch | 取得ステータス |
+| timestamp_transcription | 文字起こし処理日時 |
+| status_transcription | 文字起こしステータス |
+| process_start | 処理開始時間 |
+| process_end | 処理終了時間 |
+
+## 処理フロー詳細
+
+1. **Webhook受信と記録**
+   - Zoom通話の録音ファイルが生成されると、クラウドファンクションによってRecordingsシートに記録
+   - `record_id`, `download_url`, `timestamp_recording`等の情報を記録
+
+2. **定期的なファイル取得**
+   - 30分ごとにRecordingsシートから、timestampが直近2時間かつまだ取得していないrecording_idを対象に
+   - ZoomAPIを使用してファイルをDrive上の未処理フォルダへfetch
+   - 取得状況は`status_fetch`, `timestamp_fetch`に記録
+
+3. **文字起こし処理**
+   - 10分ごとに最大バッチサイズ10で未処理フォルダにあるファイルを文字起こし
+   - 文字起こし状況は`status_transcription`, `timestamp_transcription`に記録
+   - 処理時間は`process_start`, `process_end`に記録
+   - 処理結果はcall_recordsシートに保存
+
+4. **ファイル管理**
+   - 文字起こし成功: 完了フォルダに移動
+   - エラー発生: エラーフォルダに移動
+   - 処理中断: 処理中フォルダから未処理フォルダへ自動復旧
+   - 定期クリーニング: 90日超のファイルを自動削除
 
 ## プロジェクト構成
 
@@ -36,7 +99,6 @@ voice-transcription-app/
 │   │   └── ZoomPhoneTriggersSetup.js # トリガー設定モジュール
 │   ├── core/                   # コア機能
 │   │   ├── FileProcessor.js    # ファイル処理モジュール
-│   │   ├── Logger.js           # ロギングモジュール
 │   │   ├── NotificationService.js # 通知サービスモジュール
 │   │   ├── SpreadsheetManager.js # スプレッドシート操作モジュール
 │   │   └── Utilities.js        # ユーティリティ関数モジュール
@@ -54,74 +116,104 @@ voice-transcription-app/
 ├── cloud_function/             # GCPクラウドファンクション
 │   ├── index.js                # Zoom Webhook処理関数
 │   └── package.json            # 依存関係設定
-├── docs/                       # ドキュメント
-│   └── zoom_phone_integration_hybrid.md # セットアップガイド
 └── zoom-webhook-signature-verification.js # Webhookシグネチャ検証ユーティリティ
 ```
 
 ## セットアップ方法
 
 ### 前提条件
+
 - Google アカウント
 - Google Cloud Platform プロジェクト
+- Zoom開発者アカウント (`phone:read:recordings` スコープ 付き S2S OAuth アプリ)
 - AssemblyAI APIキー
 - OpenAI APIキー（オプション）
-- Zoom開発者アカウント
 - Clasp CLI（ローカル開発用）
 
-### インストール手順
+### セットアップ手順
 
-1. リポジトリをクローン
-   ```
-   git clone https://github.com/nyuki0821/voice-transcription-app.git
-   cd voice-transcription-app
-   ```
+1. **スプレッドシートセットアップ**
+   - Google Drive → 新規 → Google スプレッドシート → タイトル `Zoom Voice Recordings` を作成
+   - シートタブ名を `Recordings` に変更し、必要なヘッダーを設定
+   - Recordingsシートのスプレッドシート ID を控える (`RECORDINGS_SHEET_ID` として使用)
 
-2. 依存関係のインストール
-   ```
-   npm install
-   ```
+2. **GCP プロジェクト作成**
+   - 新規プロジェクト `zoom-webhook-relay` を作成
+   - 以下のAPIを有効化:
+     - Cloud Functions API
+     - Cloud Build API
+     - Google Sheets API
 
-3. Claspでログイン（初回のみ）
-   ```
-   npx clasp login
-   ```
+3. **サービスアカウント設定**
+   - サービスアカウント `zoom-sheets-integration` を作成
+   - ロール: Viewer (閲覧者)
+   - スプレッドシートの共有設定でサービスアカウントに編集者権限を付与
 
-4. スクリプトをデプロイ
-   ```
-   npx clasp push
-   ```
+4. **Cloud Functions 構築**
+   - `index.js` と `package.json` を準備 (cloud_functionフォルダ参照)
+   - Node.js 18, HTTP トリガーでデプロイ
+   - 環境変数設定:
+     - `ZOOM_WEBHOOK_SECRET`: Webhookシークレット
+     - `RECORDINGS_SHEET_ID`: スプレッドシートID
 
-5. クラウドファンクション設定（Zoom Webhook用）
-   ```
-   cd cloud_function
-   gcloud functions deploy zoomWebhook --runtime nodejs18 --trigger-http
-   ```
+5. **Zoom Webhook 設定**
+   - Zoom Marketplace アプリ → Event Subscriptions にCloud FunctionsのURLを設定
+   - Secret Tokenとして`ZOOM_WEBHOOK_SECRET`と同じ値を設定し検証
 
-6. スクリプトのプロパティを設定
-   - スクリプトエディタから「プロジェクトの設定」→「スクリプトのプロパティ」
-   - 以下のプロパティを設定:
-     - `SPREADSHEET_ID`: データ管理用スプレッドシートID
-     - その他必要な設定値はスプレッドシートの「システム設定」シートから管理
+6. **Apps Script 配備**
+   - `.clasp.json` ファイルを設定
+   - `clasp push --force` でコードをデプロイ
 
-## 使用方法
+7. **トリガー設定**
+   - `clasp run setupZoomTriggers` で録音DLバッチを設定
+   - `clasp run setupTranscriptionTriggers` で文字起こしバッチを設定
 
-1. スプレッドシートの「システム設定」シートでAPI設定と処理設定を行う
-2. トリガーを設定して定期実行（`setupTriggers()`関数を実行）
-3. Zoom Phone APIおよびWebhook連携を設定（詳細は`docs/zoom_phone_integration_hybrid.md`を参照）
-4. 自動的に録音ファイルが処理され、文字起こし・分析が実行され結果がスプレッドシートに保存
-5. 指定時間に処理結果のサマリーがメール通知
+8. **スクリプトプロパティ設定**
+   - `CONFIG_SPREADSHEET_ID`: 設定用スプレッドシートID
+   - スプレッドシートの `settings` シートに各種APIキーや設定を記述
 
-## ライセンス
+### 必要な設定項目
 
-ISC
+| 設定項目 | 説明 |
+|---------|------|
+| RECORDINGS_SHEET_ID | 録音メタデータ管理シートID |
+| ASSEMBLYAI_API_KEY | AssemblyAI API キー |
+| OPENAI_API_KEY | OpenAI API キー（オプション） |
+| SOURCE_FOLDER_ID | 未処理音声ファイル保存フォルダID |
+| PROCESSING_FOLDER_ID | 処理中フォルダID |
+| COMPLETED_FOLDER_ID | 完了フォルダID |
+| ERROR_FOLDER_ID | エラーフォルダID |
+| ZOOM_CLIENT_ID | Zoom API クライアントID |
+| ZOOM_CLIENT_SECRET | Zoom API クライアントシークレット |
+| ZOOM_ACCOUNT_ID | Zoom アカウントID |
+| ZOOM_WEBHOOK_SECRET | Webhook検証用シークレット |
+| RETENTION_DAYS | ファイル保持日数（デフォルト90日) |
+
+## 料金モデルと運用コスト
+
+| サービス | 無料枠 | 想定消費量/日 | 超過時単価 (USD) |
+|----------|--------|--------------|------------------|
+| Cloud Functions (1st Gen) | 2M calls, 400k GB-sec | 1k calls, <5k GB-sec | $0.40/1M calls |
+| Cloud Build | 120 build-min/day | デプロイ時のみ | $0.0034/min |
+| Sheets API | 無料 | 数十 write | – |
+| Apps Script | 90 min exec/day | ≈60 min | – |
+| Zoom API | 100 req/日/Account | ≈50 | 超過：1 min cool-down |
+
+※ 1 日 1,000 Webhook & 100 録音でも各無料枠以内でほぼゼロコスト。
+
+## 運用・監視のベストプラクティス
+
+| 観点 | 推奨策 |
+|------|--------|
+| エラー検知 | Apps Script の例外を Gmail / Google Chat に送信 |
+| リトライ | Cloud Functions は 200 を返し Zoom のリトライを防止 |
+| レート制限 | `Utilities.sleep(200)` & pageSize 制御で緩和 |
+| Drive 容量 | `RETENTION_DAYS` を 90 日→60 日へ短縮するなど柔軟運用 |
+| コスト監視 | Billing Alert を $10/月 で設定 |
 
 ## 注意事項
 
 - API使用量と料金に注意してください
 - 個人情報を含む会話の処理には適切なセキュリティ対策を講じてください
-- 長期間のデータ保持には`RetentionCleaner.js`の設定を適切に行ってください
-
-## ドキュメント
-
-主要なセットアップ・運用ガイドは docs/zoom_phone_integration_hybrid.md を参照してください。 
+- 長期間のデータ保持には `RetentionCleaner.js` の設定を適切に行ってください
+- 文字起こしエラー発生時はログに記録されますが、call_recordsシートには保存されません 

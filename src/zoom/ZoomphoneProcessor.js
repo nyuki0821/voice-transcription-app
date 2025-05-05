@@ -38,7 +38,6 @@ var ZoomphoneProcessor = (function () {
           var file = ZoomphoneService.saveRecordingToDrive(blob, rec, folderId);
           if (file) {
             markCallAsProcessed(id);
-            logProcessedIdToSheet(id, rec);
             saved++;
           }
         });
@@ -76,95 +75,6 @@ var ZoomphoneProcessor = (function () {
     if (ids.indexOf(id) === -1) ids.push(id);
     while (ids.length > 1000) ids.shift();
     PropertiesService.getScriptProperties().setProperty('PROCESSED_CALL_IDS', JSON.stringify(ids));
-  }
-
-  /** 処理済みIDをスプレッドシートに記録する 
-   * @param {string} id - 録音ID
-   * @param {Object=} metadata - 追加情報（オプション）
-   */
-  function logProcessedIdToSheet(id, metadata) {
-    try {
-      var spreadsheetId = EnvironmentConfig.get('PROCESSED_IDS_SHEET_ID', '');
-      if (!spreadsheetId) return;
-
-      var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-      var sheet = spreadsheet.getSheetByName('processed_ids');
-
-      if (!sheet) {
-        sheet = spreadsheet.insertSheet('processed_ids');
-        sheet.getRange(1, 1, 1, 6).setValues([
-          ['timestamp', 'recording_id', 'call_datetime', 'duration_seconds', 'caller_number', 'called_number']
-        ]);
-        // カラム幅を設定
-        sheet.setColumnWidth(1, 180); // timestamp
-        sheet.setColumnWidth(2, 300); // recording_id
-        sheet.setColumnWidth(3, 180); // call_datetime
-        sheet.setColumnWidth(4, 120); // duration_seconds
-        sheet.setColumnWidth(5, 150); // caller_number
-        sheet.setColumnWidth(6, 150); // called_number
-      }
-
-      var now = new Date();
-      var formattedDateTime = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-
-      // メタデータから追加情報を取得
-      var callDatetime = '';
-      var durationSeconds = '';
-      var callerNumber = '';
-      var calledNumber = '';
-
-      if (metadata) {
-        Logger.log('録音メタデータ: ' + JSON.stringify(metadata));
-
-        // 開始時間の取得（複数の可能性を考慮）
-        if (metadata.start_time) {
-          var startTime = new Date(metadata.start_time);
-          callDatetime = Utilities.formatDate(startTime, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-        } else if (metadata.date_time) {
-          var dateTime = new Date(metadata.date_time);
-          callDatetime = Utilities.formatDate(dateTime, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-        } else if (metadata.created_at) {
-          var createdAt = new Date(metadata.created_at);
-          callDatetime = Utilities.formatDate(createdAt, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-        }
-
-        // 通話時間
-        durationSeconds = metadata.duration || metadata.duration_seconds || '';
-
-        // 電話番号情報
-        if (metadata.caller) {
-          callerNumber = metadata.caller.phone_number || '';
-        } else {
-          callerNumber = metadata.caller_number || metadata.from || '';
-        }
-
-        if (metadata.callee) {
-          calledNumber = metadata.callee.phone_number || '';
-        } else {
-          // 国際電話形式（+81）から日本の一般的な形式（0XXX）に変換（ハイフンなし）
-          var rawNumber = metadata.callee_number || metadata.to || '';
-          if (rawNumber.startsWith('+81')) {
-            // +81 を 0 に置き換える（文字列として扱う）
-            calledNumber = '0' + rawNumber.substring(3);
-          } else {
-            calledNumber = rawNumber;
-          }
-        }
-      }
-
-      var lastRow = sheet.getLastRow();
-      sheet.getRange(lastRow + 1, 1, 1, 6).setValues([
-        [formattedDateTime, id, callDatetime, durationSeconds, callerNumber, calledNumber]
-      ]);
-
-      Logger.log('録音情報をスプレッドシートに保存: ID=' + id +
-        ', 通話時間=' + durationSeconds +
-        ', 発信=' + callerNumber +
-        ', 着信=' + calledNumber);
-    } catch (error) {
-      // エラーは無視して処理続行
-      Logger.log('処理済みID記録エラー: ' + error.toString());
-    }
   }
 
   /**
@@ -230,7 +140,6 @@ var ZoomphoneProcessor = (function () {
         var file = ZoomphoneService.saveRecordingToDrive(blob, recMeta, folderId);
         if (file) {
           markCallAsProcessed(id);
-          logProcessedIdToSheet(id, recMeta);
           updateRecordingStatus(rec.rowIndex, 'PROCESSED');
           saved++;
         } else {
@@ -449,7 +358,6 @@ var ZoomphoneProcessor = (function () {
     processRecordingsFromSheet: processRecordingsFromSheet,
     getProcessedCallIds: getProcessedCallIds,
     markCallAsProcessed: markCallAsProcessed,
-    logProcessedIdToSheet: logProcessedIdToSheet,
     updateRecordingStatus: updateRecordingStatus,
     continueZoomProcessing: _continueZoomProcessing
   };

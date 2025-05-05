@@ -156,109 +156,141 @@ var SpreadsheetManager = (function () {
   }
 
   /**
-   * 処理ログをスプレッドシートに記録する
-   * @param {string} fileName - 処理対象ファイル名
-   * @param {string} status - 処理ステータス
-   * @param {string} processStart - 処理開始時間（オプション）
-   * @param {string} processEnd - 処理終了時間（オプション）
-   * @param {string} recordingId - 録音ID（オプション）、未指定時はfileNameから抽出を試みる
+   * 処理対象ファイルの一覧を取得する
+   * @returns {Array} 未処理ファイルのリスト
    */
-  function logProcessing(fileName, status, processStart, processEnd, recordingId) {
+  function getUnprocessedFiles() {
     try {
-      // スプレッドシートIDを取得
-      var spreadsheetId = EnvironmentConfig.get('LOG_SHEET_ID', '');
-      if (!spreadsheetId) {
-        return;
-      }
+      var folder = getSourceFolder();
+      if (!folder) return [];
 
-      var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-      var sheet = spreadsheet.getSheetByName('processing_log');
+      var files = folder.getFiles();
+      var unprocessed = [];
 
-      if (!sheet) {
-        // シートが存在しない場合は作成
-        sheet = spreadsheet.insertSheet('processing_log');
-        // ヘッダー行を設定
-        sheet.getRange(1, 1, 1, 6).setValues([
-          ['timestamp', 'recording_id', 'file_name', 'status', 'process_start', 'process_end']
-        ]);
-        // カラム幅を設定
-        sheet.setColumnWidth(1, 180); // timestamp
-        sheet.setColumnWidth(2, 300); // recording_id
-        sheet.setColumnWidth(3, 250); // file_name
-        sheet.setColumnWidth(4, 150); // status
-        sheet.setColumnWidth(5, 180); // process_start
-        sheet.setColumnWidth(6, 180); // process_end
-      }
-
-      // 最終行の次の行に追加
-      var lastRow = sheet.getLastRow();
-      var newRow = lastRow + 1;
-
-      // 現在時刻を取得
-      var now = new Date();
-      // 日付を手動でフォーマット
-      var year = now.getFullYear();
-      var month = ('0' + (now.getMonth() + 1)).slice(-2);
-      var day = ('0' + now.getDate()).slice(-2);
-      var hour = ('0' + now.getHours()).slice(-2);
-      var minute = ('0' + now.getMinutes()).slice(-2);
-      var second = ('0' + now.getSeconds()).slice(-2);
-      var formattedDateTime = year + '-' + month + '-' + day + ' ' + hour + ':' + minute + ':' + second;
-
-      // 処理時間が指定されていない場合は現在時刻を使用
-      var startTime = processStart || formattedDateTime;
-      var endTime = processEnd || formattedDateTime;
-
-      // recordingIdが指定されていない場合、ファイル名からの抽出を試みる
-      var extractedRecordingId = recordingId;
-      if (!extractedRecordingId && fileName) {
-        // 複数のUUIDパターンを試す
-
-        // パターン1: ハイフン区切りのUUID (例: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
-        var uuidWithHyphens = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-
-        // パターン2: アンダースコア区切りのUUID (例: xxxxxxxx_xxxx_xxxx_xxxx_xxxxxxxxxxxx)
-        var uuidWithUnderscores = fileName.match(/([0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12})/i);
-
-        // パターン3: 連続した32文字の16進数 (例: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)
-        var uuidWithoutSeparator = fileName.match(/_([0-9a-f]{32})[^0-9a-f]/i);
-
-        // どれかにマッチするものを使用
-        if (uuidWithHyphens) {
-          extractedRecordingId = uuidWithHyphens[1];
-        } else if (uuidWithUnderscores) {
-          extractedRecordingId = uuidWithUnderscores[1];
-        } else if (uuidWithoutSeparator) {
-          extractedRecordingId = uuidWithoutSeparator[1];
-        } else {
-          // 最後の手段: ファイル名から _YYYYMMDDHHMMSS_ の後の部分を抽出
-          var lastPartMatch = fileName.match(/_(\d{14})_([0-9a-f]+)\./i);
-          if (lastPartMatch) {
-            extractedRecordingId = lastPartMatch[2];
-          }
+      while (files.hasNext()) {
+        var file = files.next();
+        // MP3ファイルのみを対象とする
+        if (file.getName().toLowerCase().indexOf('.mp3') !== -1) {
+          unprocessed.push(file);
         }
       }
 
-      // データを配列として準備
-      var rowData = [
-        formattedDateTime,      // timestamp
-        extractedRecordingId || '',  // recording_id（抽出できなければ空文字）
-        fileName,               // file_name
-        status,                 // status
-        startTime,              // process_start
-        endTime                 // process_end
-      ];
-
-      // 行を追加
-      sheet.getRange(newRow, 1, 1, rowData.length).setValues([rowData]);
-    } catch (error) {
-      // ログ記録のエラーは無視する
+      return unprocessed;
+    } catch (e) {
+      Logger.log('未処理ファイル取得エラー: ' + e.toString());
+      return [];
     }
   }
 
-  // 公開メソッド
+  /**
+   * 音声ファイルを処理中フォルダに移動
+   * @param {DriveFile} file ドライブファイル
+   * @returns {boolean} 成功したらtrue
+   */
+  function moveToProcessing(file) {
+    try {
+      var processingFolder = getProcessingFolder();
+      if (!processingFolder) return false;
+
+      // 元のフォルダから削除
+      var parents = file.getParents();
+      while (parents.hasNext()) {
+        var parent = parents.next();
+        parent.removeFile(file);
+      }
+
+      // 処理中フォルダに追加
+      processingFolder.addFile(file);
+      return true;
+    } catch (e) {
+      Logger.log('処理中フォルダ移動エラー: ' + e.toString());
+      return false;
+    }
+  }
+
+  /**
+   * 音声ファイルを完了フォルダに移動
+   * @param {DriveFile} file ドライブファイル
+   * @returns {boolean} 成功したらtrue
+   */
+  function moveToCompleted(file) {
+    try {
+      var completedFolder = getCompletedFolder();
+      if (!completedFolder) return false;
+
+      // 元のフォルダから削除
+      var parents = file.getParents();
+      while (parents.hasNext()) {
+        var parent = parents.next();
+        parent.removeFile(file);
+      }
+
+      // 完了フォルダに追加
+      completedFolder.addFile(file);
+      return true;
+    } catch (e) {
+      Logger.log('完了フォルダ移動エラー: ' + e.toString());
+      return false;
+    }
+  }
+
+  /**
+   * 音声ファイルをエラーフォルダに移動
+   * @param {DriveFile} file ドライブファイル
+   * @returns {boolean} 成功したらtrue
+   */
+  function moveToError(file) {
+    try {
+      var errorFolder = getErrorFolder();
+      if (!errorFolder) return false;
+
+      // 元のフォルダから削除
+      var parents = file.getParents();
+      while (parents.hasNext()) {
+        var parent = parents.next();
+        parent.removeFile(file);
+      }
+
+      // エラーフォルダに追加
+      errorFolder.addFile(file);
+      return true;
+    } catch (e) {
+      Logger.log('エラーフォルダ移動エラー: ' + e.toString());
+      return false;
+    }
+  }
+
+  // 各種フォルダの取得関数
+  function getSourceFolder() {
+    var folderId = EnvironmentConfig.get('SOURCE_FOLDER_ID', '');
+    return folderId ? DriveApp.getFolderById(folderId) : null;
+  }
+
+  function getProcessingFolder() {
+    var folderId = EnvironmentConfig.get('PROCESSING_FOLDER_ID', '');
+    return folderId ? DriveApp.getFolderById(folderId) : null;
+  }
+
+  function getCompletedFolder() {
+    var folderId = EnvironmentConfig.get('COMPLETED_FOLDER_ID', '');
+    return folderId ? DriveApp.getFolderById(folderId) : null;
+  }
+
+  function getErrorFolder() {
+    var folderId = EnvironmentConfig.get('ERROR_FOLDER_ID', '');
+    return folderId ? DriveApp.getFolderById(folderId) : null;
+  }
+
+  // 公開API
   return {
-    logProcessing: logProcessing,
-    extractDateTimeFromFileName: extractDateTimeFromFileName
+    extractDateTimeFromFileName: extractDateTimeFromFileName,
+    getUnprocessedFiles: getUnprocessedFiles,
+    moveToProcessing: moveToProcessing,
+    moveToCompleted: moveToCompleted,
+    moveToError: moveToError,
+    getSourceFolder: getSourceFolder,
+    getProcessingFolder: getProcessingFolder,
+    getCompletedFolder: getCompletedFolder,
+    getErrorFolder: getErrorFolder
   };
 })();
