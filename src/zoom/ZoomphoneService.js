@@ -18,13 +18,13 @@ var ZoomphoneService = (function () {
   function listCallRecordings(fromDate, toDate, page, pageSize) {
     try {
       var fromStr = Utilities.formatDate(fromDate, 'UTC', 'yyyy-MM-dd');
-      var toStr   = Utilities.formatDate(toDate,   'UTC', 'yyyy-MM-dd');
+      var toStr = Utilities.formatDate(toDate, 'UTC', 'yyyy-MM-dd');
 
       var params = [
         'from=' + fromStr,
-        'to='   + toStr,
-        'page_size='   + (pageSize || 30),
-        'page_number=' + (page     || 1)
+        'to=' + toStr,
+        'page_size=' + (pageSize || 30),
+        'page_number=' + (page || 1)
       ];
       var endpoint = '/phone/recordings?' + params.join('&');
 
@@ -116,7 +116,7 @@ var ZoomphoneService = (function () {
     try {
       if (!blob) return null; // 取得失敗時
       if (!folderId) throw new Error('保存先フォルダ ID がありません');
-      
+
       // 日時情報の取得（複数の可能性を考慮）
       var timestamp = null;
       if (recMeta.start_time) {
@@ -129,16 +129,50 @@ var ZoomphoneService = (function () {
         // どのフィールドも存在しない場合は現在時刻を使用
         timestamp = new Date();
       }
-      
+
       // 録音IDの取得
       var recordingId = recMeta.recording_id || recMeta.id || 'unknown';
-      
+
       // 日付をフォーマット
       var dateStr = Utilities.formatDate(timestamp, 'UTC', 'yyyyMMddHHmmss');
       var fileName = 'zoom_call_' + dateStr + '_' + recordingId + '.mp3';
-      
+
       var folder = DriveApp.getFolderById(folderId);
       var file = folder.createFile(blob.setName(fileName));
+
+      // メタデータをファイルの説明に保存
+      try {
+        // 重要なメタデータのみを選択して保存
+        var metadataToSave = {
+          recording_id: recordingId,
+          start_time: recMeta.start_time || recMeta.date_time || recMeta.created_at || new Date().toISOString(),
+          duration: recMeta.duration || recMeta.duration_seconds || 0,
+          caller_number: recMeta.caller ? recMeta.caller.phone_number : (recMeta.caller_number || recMeta.from || ''),
+          called_number: recMeta.callee_number || (recMeta.callee ? recMeta.callee.phone_number : '') || recMeta.to || '',
+          call_direction: recMeta.call_direction || recMeta.direction || '',
+          file_name: fileName
+        };
+
+        // メタデータのログ出力（デバッグ用）
+        Logger.log('保存するメタデータ: ' + JSON.stringify({
+          original: {
+            id: recMeta.id || '',
+            recording_id: recMeta.recording_id || '',
+            caller_number: recMeta.caller_number || '',
+            callee_number: recMeta.callee_number || '',
+            direction: recMeta.direction || ''
+          },
+          saved: metadataToSave
+        }));
+
+        // ファイルの説明にJSONを設定
+        file.setDescription(JSON.stringify(metadataToSave));
+        Logger.log('録音メタデータをファイル説明に保存しました: ' + file.getName());
+      } catch (metaErr) {
+        Logger.log('メタデータの保存に失敗しました: ' + metaErr.toString());
+        // メタデータ保存の失敗はファイル保存自体の失敗とはしない
+      }
+
       return file;
     } catch (err) {
       throw err;
@@ -149,9 +183,9 @@ var ZoomphoneService = (function () {
    * 公開メソッド
    * ------------------------------------------------------------------*/
   return {
-    listCallRecordings : listCallRecordings,
-    getRecordingBlob   : getRecordingBlob,
-    downloadBlob       : downloadBlob,
+    listCallRecordings: listCallRecordings,
+    getRecordingBlob: getRecordingBlob,
+    downloadBlob: downloadBlob,
     saveRecordingToDrive: saveRecordingToDrive
   };
 })();

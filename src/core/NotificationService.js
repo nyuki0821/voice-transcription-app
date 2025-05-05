@@ -1,7 +1,7 @@
 /**
  * 通知サービスモジュール
  */
-var NotificationService = (function() {
+var NotificationService = (function () {
   /**
    * 処理結果サマリーをメールで送信する
    * @param {string} email - 送信先メールアドレス
@@ -12,16 +12,16 @@ var NotificationService = (function() {
     if (!email) {
       return;
     }
-    
+
     try {
       var subject = '顧客会話自動文字起こしシステム - 処理結果サマリー';
-      
+
       var body = '処理結果サマリー\n\n' +
-                 '処理日時: ' + new Date().toLocaleString() + '\n' +
-                 '処理時間: ' + processingTime + '秒\n\n' +
-                 '成功: ' + results.success + '件\n' +
-                 'エラー: ' + results.error + '件\n\n';
-      
+        '処理日時: ' + new Date().toLocaleString() + '\n' +
+        '処理時間: ' + processingTime + '秒\n\n' +
+        '成功: ' + results.success + '件\n' +
+        'エラー: ' + results.error + '件\n\n';
+
       if (results.details && results.details.length > 0) {
         body += '詳細:\n';
         for (var i = 0; i < results.details.length; i++) {
@@ -29,14 +29,14 @@ var NotificationService = (function() {
           body += '- ' + detail.fileName + ': ' + detail.status + ' (' + detail.message + ')\n';
         }
       }
-      
+
       // メール送信
       GmailApp.sendEmail(email, subject, body);
     } catch (error) {
       // エラーは無視
     }
   }
-  
+
   /**
    * エラー通知をメールで送信する
    * @param {string} email - 送信先メールアドレス
@@ -47,22 +47,22 @@ var NotificationService = (function() {
     if (!email) {
       return;
     }
-    
+
     try {
       var subject = '顧客会話自動文字起こしシステム - エラー通知';
-      
+
       var body = 'ファイル処理中にエラーが発生しました\n\n' +
-                 'ファイル名: ' + fileName + '\n' +
-                 'エラー内容: ' + errorMessage + '\n' +
-                 '発生日時: ' + new Date().toLocaleString() + '\n';
-      
+        'ファイル名: ' + fileName + '\n' +
+        'エラー内容: ' + errorMessage + '\n' +
+        '発生日時: ' + new Date().toLocaleString() + '\n';
+
       // メール送信
       GmailApp.sendEmail(email, subject, body);
     } catch (error) {
       // エラーは無視
     }
   }
-  
+
   /**
    * 日次処理結果サマリーをメールで送信する
    * @param {string} email - 送信先メールアドレス
@@ -73,31 +73,24 @@ var NotificationService = (function() {
     if (!email) {
       return;
     }
-    
+
     try {
       var subject = '顧客会話自動文字起こしシステム - ' + dateStr + ' 日次処理結果サマリー';
-      
+
       var body = dateStr + ' の処理結果サマリー\n\n' +
-                 '成功: ' + results.success + '件\n' +
-                 'エラー: ' + results.error + '件\n\n';
-      
-      if (results.details && results.details.length > 0) {
-        body += '処理ファイル一覧:\n';
-        for (var i = 0; i < results.details.length; i++) {
-          var detail = results.details[i];
-          body += '- ' + detail.fileName + ': ' + detail.status + '\n';
-        }
-      } else {
-        body += '本日処理されたファイルはありません。\n';
-      }
-      
+        '成功: ' + results.success + '件\n' +
+        'エラー: ' + results.error + '件\n\n';
+
+      // ファイル名リストは含めない
+      body += '本日の処理件数合計: ' + (results.success + results.error) + '件\n';
+
       // メール送信
       GmailApp.sendEmail(email, subject, body);
     } catch (error) {
       // エラーは無視
     }
   }
-  
+
   // 公開メソッド
   return {
     sendProcessingSummary: sendProcessingSummary,
