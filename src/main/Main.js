@@ -1,6 +1,18 @@
 /**
  * メインコントローラー（OpenAI API対応版）
  * バッチ処理のエントリーポイント
+ *
+ * 依存モジュール:
+ * - EnvironmentConfig (src/config/EnvironmentConfig.js)
+ * - TriggerManager (src/main/TriggerManager.js)
+ * - ZoomphoneProcessor (src/zoom/ZoomphoneProcessor.js)
+ * - NotificationService (src/core/NotificationService.js)
+ * - ZoomphoneTriggersWrapper (src/main/ZoomphoneTriggersWrapper.js) - 下位互換性のため
+ */
+
+/**
+ * メインコントローラー（OpenAI API対応版）
+ * バッチ処理のエントリーポイント
  */
 
 // グローバル変数
@@ -554,51 +566,6 @@ function updateTranscriptionStatusByRecordId(recordId, status, processStart, pro
   } catch (e) {
     Logger.log('文字起こし状態の更新でエラー: ' + e.toString());
   }
-}
-
-/**
- * 文字起こし処理用のトリガーを設定する関数
- */
-function setupTranscriptionTriggers() {
-  // 既存のトリガーをすべて削除
-  var triggers = ScriptApp.getProjectTriggers();
-  for (var i = 0; i < triggers.length; i++) {
-    var trigger = triggers[i];
-    var handlerFunction = trigger.getHandlerFunction();
-    // 自分が管理するトリガーのみ削除
-    if (handlerFunction === 'startDailyProcess' ||
-      handlerFunction === 'processBatchOnSchedule' ||
-      handlerFunction === 'sendDailySummary') {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  }
-
-  // 6時にプロセスを開始するトリガー
-  ScriptApp.newTrigger('startDailyProcess')
-    .timeBased()
-    .atHour(6)
-    .nearMinute(0)
-    .everyDays(1)
-    .create();
-
-  // 10分ごとの処理実行トリガー
-  ScriptApp.newTrigger('processBatchOnSchedule')
-    .timeBased()
-    .everyMinutes(10)
-    .create();
-
-  // 19時の日次サマリーメール送信トリガー
-  ScriptApp.newTrigger('sendDailySummary')
-    .timeBased()
-    .atHour(19)
-    .nearMinute(0)
-    .everyDays(1)
-    .create();
-
-  return '文字起こし処理用トリガーを設定しました：\n' +
-    '1. 6時開始トリガー\n' +
-    '2. 10分ごとの処理トリガー（6:00～24:00の間のみ）\n' +
-    '3. 19時の日次サマリーメール送信トリガー';
 }
 
 /**

@@ -112,7 +112,8 @@ voice-transcription-app/
 ├── src/                        # ソースコードディレクトリ
 │   ├── main/                   # メインコントローラー
 │   │   ├── Main.js             # アプリケーションのエントリーポイント
-│   │   └── ZoomPhoneTriggersSetup.js # トリガー設定モジュール
+│   │   ├── TriggerManager.js   # トリガー管理モジュール
+│   │   └── ZoomphoneTriggersWrapper.js # 古いトリガー設定のラッパー
 │   ├── core/                   # コア機能
 │   │   ├── FileProcessor.js    # ファイル処理モジュール
 │   │   ├── NotificationService.js # 通知サービスモジュール
@@ -181,8 +182,7 @@ voice-transcription-app/
    - `clasp push --force` でコードをデプロイ
 
 7. **トリガー設定**
-   - `clasp run setupZoomTriggers` で録音DLバッチを設定
-   - `clasp run setupTranscriptionTriggers` で文字起こしバッチを設定
+   - `clasp run TriggerManager.setupAllTriggers` で全てのトリガーを一括設定
 
 8. **スクリプトプロパティ設定**
    - `CONFIG_SPREADSHEET_ID`: 設定用スプレッドシートID
@@ -213,11 +213,11 @@ voice-transcription-app/
 
 | 設定関数名 | 設定内容 | ファイル |
 |------------|----------|----------|
-| `setupZoomTriggers()` | Zoom録音関連の全トリガー設定 | `ZoomPhoneTriggersSetup.js` |
-| `setupTranscriptionTriggers()` | 文字起こし関連の全トリガー設定 | `Main.js` |
-| `setupDailyZoomApiTokenRefresh()` | Zoom APIトークン更新トリガー | `ZoomPhoneTriggersSetup.js` |
-| `setupRecordingsSheetTrigger()` | Recordingsシート処理トリガー | `ZoomPhoneTriggersSetup.js` |
-| `setupAllTriggers()` | Zoom APIトークンとシート処理のトリガー | `ZoomPhoneTriggersSetup.js` |
+| `setupZoomTriggers()` | Zoom録音関連の全トリガー設定 | `TriggerManager.js` |
+| `setupTranscriptionTriggers()` | 文字起こし関連の全トリガー設定 | `TriggerManager.js` |
+| `setupDailyZoomApiTokenRefresh()` | Zoom APIトークン更新トリガー | `TriggerManager.js` |
+| `setupRecordingsSheetTrigger()` | Recordingsシート処理トリガー | `TriggerManager.js` |
+| `setupAllTriggers()` | 全てのアプリケーショントリガーを一括設定 | `TriggerManager.js` |
 
 ### バッチ処理一覧
 
@@ -256,20 +256,18 @@ voice-transcription-app/
 
 1. **初期セットアップ時**:
    ```javascript
-   setupZoomTriggers();  // Zoom録音関連のトリガー設定
-   setupTranscriptionTriggers();  // 文字起こし関連のトリガー設定
+   TriggerManager.setupAllTriggers();  // 全てのトリガーを一括設定
    ```
 
 2. **トリガーに問題が発生した場合**:
    ```javascript
-   deleteAllTriggers();  // 全てのトリガーをリセット
-   setupZoomTriggers();  // 再設定
-   setupTranscriptionTriggers();  // 再設定
+   TriggerManager.deleteAllTriggers();  // 全てのトリガーをリセット
+   TriggerManager.setupAllTriggers();  // 再設定
    ```
 
 3. **特定のバッチのみ手動実行する場合**:
    ```javascript
-   fetchLast24HoursRecordings();  // 直近24時間分の録音取得
+   TriggerManager.fetchLast24HoursRecordings();  // 直近24時間分の録音取得
    manualSendDailySummary();  // 本日分のサマリー送信
    ```
 
