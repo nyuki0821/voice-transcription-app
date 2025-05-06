@@ -13,18 +13,35 @@ Zoom通話録音ファイルを文字起こしし、情報を抽出・分析す�
 
 ## アーキテクチャ全体像
 
-```mermaid
-flowchart TB
-    Z(Zoom Phone) -->|recording_completed| CF[Cloud Functions\n(zoom-webhook-handler)]
-    CF --> Sheets[(Google Sheets\nRecordings)]
-    subgraph GAS Project
-      Trigger30((30 min Trigger)) --> ZP[ZoomphoneProcessor]
-      ZP -->|download & save| GD[(Google Drive\n録音フォルダ)]
-      Trigger10((10 min Trigger)) --> TP[Transcription Pipeline]
-      GD --> TP
-      TP --> Sheets
-      Retention((Weekly Clean)) --> GD
-    end
+```
+                   recording_completed
+    Zoom Phone -------------------------→ Cloud Functions
+                                           (zoom-webhook-handler)
+                                                   |
+                                                   ↓
+                                          Google Sheets
+                                          (Recordings)
+
+    [GAS Project]
+    ┌───────────────────────────────────────────────┐
+    │                                               │
+    │  30 min Trigger                               │
+    │  ↓                                            │
+    │  ZoomphoneProcessor                           │
+    │  └─→ download & save                          │
+    │       ↓                                       │
+    │  Google Drive                                 │
+    │  (録音フォルダ)                               │
+    │                                               │
+    │  10 min Trigger                               │
+    │  ↓                                            │
+    │  Transcription Pipeline                       │
+    │  └─→ Process & Analyze                        │
+    │       └─→ Write to Sheets                     │
+    │                                               │
+    │  Weekly Retention Cleanup                     │
+    │  └─→ Remove old files                         │
+    └───────────────────────────────────────────────┘
 ```
 
 | コンポーネント | 主な役割 | 実装/ファイル |
@@ -42,7 +59,6 @@ flowchart TB
 | 録音完了時 即時 | Webhook → メタ記録 | **Cloud Functions** | HMAC 検証 / Sheets へ 1 行追記 (録音 ID, DL URL, 時刻, 電話番号, Duration等) |
 | 30 分おき | 録音ファイル DL | **GAS `checkAndFetchZoomRecordings`** | Zoom API で 直近 2h をリスト → 未取得を Drive 保存 |
 | 10 分おき | 文字起こし & 要約 | **GAS `processBatchOnSchedule`** | AssemblyAI → OpenAI (任意) → Sheets に貼付 |
-| 月曜 09:10 | 週末バッチ | GAS | 金曜 21:00〜月曜 09:00 取得 |
 | 日曜 03:00 | リテンション | GAS | Drive 内 90 日超ファイル削除 |
 
 ## ログステータス管理
@@ -188,6 +204,74 @@ voice-transcription-app/
 | ZOOM_ACCOUNT_ID | Zoom アカウントID |
 | ZOOM_WEBHOOK_SECRET | Webhook検証用シークレット |
 | RETENTION_DAYS | ファイル保持日数（デフォルト90日) |
+
+## トリガー構成とバッチ処理一覧
+
+このアプリケーションでは、以下のトリガーとバッチ処理を使用しています。
+
+### トリガー設定関数
+
+| 設定関数名 | 設定内容 | ファイル |
+|------------|----------|----------|
+| `setupZoomTriggers()` | Zoom録音関連の全トリガー設定 | `ZoomPhoneTriggersSetup.js` |
+| `setupTranscriptionTriggers()` | 文字起こし関連の全トリガー設定 | `Main.js` |
+| `setupDailyZoomApiTokenRefresh()` | Zoom APIトークン更新トリガー | `ZoomPhoneTriggersSetup.js` |
+| `setupRecordingsSheetTrigger()` | Recordingsシート処理トリガー | `ZoomPhoneTriggersSetup.js` |
+| `setupAllTriggers()` | Zoom APIトークンとシート処理のトリガー | `ZoomPhoneTriggersSetup.js` |
+
+### バッチ処理一覧
+
+| 実行関数名 | タイミング | 役割 | 設定元 |
+|------------|------------|------|--------|
+| `processRecordingsFromSheet()` | 30分ごと | Recordingsシートから未処理録音を取得 | `setupZoomTriggers()` |
+| `fetchZoomRecordingsMorningBatch()` | 毎朝6:15 | 前日深夜〜当日朝までの録音を取得 | `setupZoomTriggers()` |
+| `purgeOldRecordings()` | 日曜03:00 | 90日超過ファイルの削除 | `setupZoomTriggers()` |
+| `refreshZoomAPIToken()` | 毎朝5:00 | Zoom APIトークンの更新 | `setupDailyZoomApiTokenRefresh()` |
+| `startDailyProcess()` | 毎朝6:00 | 文字起こし処理の有効化 | `setupTranscriptionTriggers()` |
+| `processBatchOnSchedule()` | 10分ごと | 文字起こし処理の定期実行(6:00-24:00) | `setupTranscriptionTriggers()` |
+| `sendDailySummary()` | 毎日19:00 | 日次サマリーメールの送信 | `setupTranscriptionTriggers()` |
+
+### 手動実行関数
+
+| 関数名 | 目的 | 備考 |
+|--------|------|------|
+| `fetchZoomRecordingsManually(hours)` | 指定時間の録音を手動取得 | 時間範囲指定可 |
+| `fetchLastHourRecordings()` | 直近1時間の録音を取得 | `fetchZoomRecordingsManually(1)` |
+| `fetchLast2HoursRecordings()` | 直近2時間の録音を取得 | `fetchZoomRecordingsManually(2)` |
+| `fetchLast6HoursRecordings()` | 直近6時間の録音を取得 | `fetchZoomRecordingsManually(6)` |
+| `fetchLast24HoursRecordings()` | 直近24時間の録音を取得 | `fetchZoomRecordingsManually(24)` |
+| `fetchLast48HoursRecordings()` | 直近48時間の録音を取得 | `fetchZoomRecordingsManually(48)` |
+| `fetchAllPendingRecordings()` | 全ての未処理録音を取得 | `fetchZoomRecordingsManually()` |
+| `manualSendDailySummary(dateStr)` | 日次サマリーを手動送信 | 日付指定可 |
+| `stopDailyProcess()` | 文字起こし処理を停止 | 処理フラグをオフ |
+
+### トリガー管理関数
+
+| 関数名 | 目的 | 備考 |
+|--------|------|------|
+| `deleteAllTriggers()` | 全てのトリガーを一括削除 | 注意：全てのトリガーが削除されます |
+| `deleteTriggersWithNameContaining(functionNamePart)` | 特定の名前を含むトリガーのみ削除 | 部分一致で削除 |
+
+### 通常運用の流れ
+
+1. **初期セットアップ時**:
+   ```javascript
+   setupZoomTriggers();  // Zoom録音関連のトリガー設定
+   setupTranscriptionTriggers();  // 文字起こし関連のトリガー設定
+   ```
+
+2. **トリガーに問題が発生した場合**:
+   ```javascript
+   deleteAllTriggers();  // 全てのトリガーをリセット
+   setupZoomTriggers();  // 再設定
+   setupTranscriptionTriggers();  // 再設定
+   ```
+
+3. **特定のバッチのみ手動実行する場合**:
+   ```javascript
+   fetchLast24HoursRecordings();  // 直近24時間分の録音取得
+   manualSendDailySummary();  // 本日分のサマリー送信
+   ```
 
 ## 料金モデルと運用コスト
 

@@ -297,3 +297,41 @@ function fetchLast48HoursRecordings() {
 function fetchAllPendingRecordings() {
   return fetchZoomRecordingsManually(); // すべての未処理録音を取得
 }
+
+/**
+ * プロジェクト内の全てのトリガーを削除する関数
+ * ※注意: 全てのトリガーが削除されるため、実行後は手動で必要なトリガーを再設定する必要があります
+ * @return {string} 削除したトリガーの数と情報
+ */
+function deleteAllTriggers() {
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    var count = triggers.length;
+    var deletedTriggers = [];
+
+    // 全てのトリガーをループして削除
+    for (var i = 0; i < triggers.length; i++) {
+      var trigger = triggers[i];
+      var handlerFunction = trigger.getHandlerFunction();
+
+      // トリガー情報を記録
+      deletedTriggers.push({
+        function: handlerFunction,
+        type: trigger.getEventType()
+      });
+
+      // トリガーを削除
+      ScriptApp.deleteTrigger(trigger);
+    }
+
+    // 削除したトリガーの情報をログに記録
+    Logger.log('削除したトリガー数: ' + count);
+    Logger.log('削除したトリガー: ' + JSON.stringify(deletedTriggers));
+
+    return '全てのトリガーを削除しました（' + count + '件）';
+  } catch (error) {
+    var errorMsg = error.toString();
+    Logger.log('トリガー削除中にエラー: ' + errorMsg);
+    return 'トリガー削除中にエラー: ' + errorMsg;
+  }
+}

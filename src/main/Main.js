@@ -567,7 +567,8 @@ function setupTranscriptionTriggers() {
     var handlerFunction = trigger.getHandlerFunction();
     // 自分が管理するトリガーのみ削除
     if (handlerFunction === 'startDailyProcess' ||
-      handlerFunction === 'processBatchOnSchedule') {
+      handlerFunction === 'processBatchOnSchedule' ||
+      handlerFunction === 'sendDailySummary') {
       ScriptApp.deleteTrigger(trigger);
     }
   }
@@ -586,9 +587,18 @@ function setupTranscriptionTriggers() {
     .everyMinutes(10)
     .create();
 
+  // 19時の日次サマリーメール送信トリガー
+  ScriptApp.newTrigger('sendDailySummary')
+    .timeBased()
+    .atHour(19)
+    .nearMinute(0)
+    .everyDays(1)
+    .create();
+
   return '文字起こし処理用トリガーを設定しました：\n' +
     '1. 6時開始トリガー\n' +
-    '2. 10分ごとの処理トリガー（6:00～24:00の間のみ）';
+    '2. 10分ごとの処理トリガー（6:00～24:00の間のみ）\n' +
+    '3. 19時の日次サマリーメール送信トリガー';
 }
 
 /**
@@ -697,6 +707,43 @@ function manualSendDailySummary(dateStr) {
     }
   } catch (error) {
     Logger.log('手動サマリー送信中にエラー: ' + error.toString());
+    return 'エラーが発生しました: ' + error.toString();
+  }
+}
+
+/**
+ * 日次処理結果サマリーを自動で送信する関数（19:00トリガー用）
+ * トリガーによって毎日19:00に自動実行される
+ * @return {string} 実行結果メッセージ
+ */
+function sendDailySummary() {
+  try {
+    // 今日の日付を取得
+    var today = new Date();
+    var dateStr = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy/MM/dd');
+
+    Logger.log('本日(' + dateStr + ')の処理サマリーを自動送信します');
+
+    // Recordingsシートから本日のデータを集計
+    var summary = calculateSummaryFromSheet(dateStr);
+
+    // 管理者メールアドレスを取得
+    var settings = getSystemSettings();
+    if (settings && settings.ADMIN_EMAILS && settings.ADMIN_EMAILS.length > 0) {
+      // 各管理者にサマリーメールを送信
+      for (var i = 0; i < settings.ADMIN_EMAILS.length; i++) {
+        NotificationService.sendDailyProcessingSummary(
+          settings.ADMIN_EMAILS[i],
+          summary,
+          dateStr
+        );
+      }
+      return dateStr + ' の日次処理サマリーを ' + settings.ADMIN_EMAILS.length + '名の管理者に自動送信しました。';
+    } else {
+      throw new Error('送信先のメールアドレスが設定されていません。');
+    }
+  } catch (error) {
+    Logger.log('自動サマリー送信中にエラー: ' + error.toString());
     return 'エラーが発生しました: ' + error.toString();
   }
 }
