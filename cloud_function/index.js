@@ -25,6 +25,54 @@ async function getSheets() {
   return sheets;
 }
 
+// 重複リクエスト防止のためのキャッシュ
+// リクエストIDをキーとして、処理済みかどうかを短時間だけ記憶する
+const processedRequests = new Map();
+// キャッシュ有効期間（30分 = 1800000ミリ秒）
+const CACHE_TTL = 1800000;
+
+// キャッシュのクリーンアップを定期的に実行
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, timestamp] of processedRequests.entries()) {
+    if (now - timestamp > CACHE_TTL) {
+      processedRequests.delete(key);
+    }
+  }
+}, 60000); // 1分ごとにクリーンアップ
+
+/**
+ * 録音IDがすでにシートに存在するか確認する
+ * @param {string} recordingId - 確認する録音ID
+ * @return {Promise<boolean>} - 録音IDが存在する場合はtrue、そうでない場合はfalse
+ */
+async function checkRecordingExists(recordingId) {
+  try {
+    if (!recordingId) return false;
+
+    const api = await getSheets();
+    const response = await api.spreadsheets.values.get({
+      spreadsheetId: RECORDINGS_SHEET_ID,
+      range: 'Recordings!A:A', // A列（record_id）のみ取得
+    });
+
+    const values = response.data.values || [];
+    // ヘッダー行をスキップして2行目から検索
+    for (let i = 1; i < values.length; i++) {
+      if (values[i][0] === recordingId) {
+        console.log(`[CF] 録音ID ${recordingId} は既に存在します。行番号: ${i + 1}`);
+        return true;
+      }
+    }
+
+    return false;
+  } catch (error) {
+    console.error('[CF] 録音ID確認中にエラー:', error);
+    // エラーの場合は安全側に倒して、重複不明として扱う
+    return false;
+  }
+}
+
 /**
  * 日付を日本時間(JST)でフォーマットする関数
  * @param {string|Date} date - ISO形式の日付文字列またはDateオブジェクト
@@ -69,6 +117,16 @@ functions.http('zoomWebhookHandler', async (req, res) => {
     headers: JSON.stringify(req.headers),
     body: JSON.stringify(req.body).substring(0, 200) + '...' // 長いボディは省略
   });
+
+  // リクエスト重複チェック（べき等処理）
+  const requestId = req.headers['x-zm-request-id'] || req.headers['x-zoom-request-id'] ||
+    req.body?.payload?.object?.id ||
+    (req.body?.payload?.plainToken ? 'verification' : '');
+
+  if (requestId && processedRequests.has(requestId)) {
+    console.log(`[CF] 重複リクエスト検出、処理をスキップ: ${requestId}`);
+    return res.status(200).send('already processed');
+  }
 
   // 署名検証（plainToken検証以外）
   if (!(req.body?.payload?.plainToken)) {
@@ -142,6 +200,12 @@ functions.http('zoomWebhookHandler', async (req, res) => {
       const plain = body.payload.plainToken;
       const hmac = crypto.createHmac('sha256', ZOOM_WEBHOOK_SECRET);
       hmac.update(plain);
+
+      // リクエストID（検証リクエスト）をキャッシュに登録
+      if (requestId) {
+        processedRequests.set(requestId, Date.now());
+      }
+
       return res.status(200).json({ plainToken: plain, encryptedToken: hmac.digest('hex') });
     }
 
@@ -152,6 +216,21 @@ functions.http('zoomWebhookHandler', async (req, res) => {
 
       // 修正：recordings配列の最初の要素を取得
       const recording = p.object?.recordings?.[0] || {};
+
+      // 重要: 録音IDが存在するか確認し、既に存在する場合は処理しない
+      if (recording.id) {
+        const exists = await checkRecordingExists(recording.id);
+        if (exists) {
+          console.log(`[CF] 録音ID ${recording.id} は既にスプレッドシートに存在するため、処理をスキップします`);
+
+          // リクエストIDをキャッシュに登録
+          if (requestId) {
+            processedRequests.set(requestId, Date.now());
+          }
+
+          return res.status(200).send('record already exists');
+        }
+      }
 
       // 通話日時を処理（JSTに変換）
       const callDateTime = formatToJST(recording.date_time);
@@ -231,11 +310,23 @@ functions.http('zoomWebhookHandler', async (req, res) => {
         insertDataOption: 'INSERT_ROWS',
         resource: { values: rows },
       });
+
+      // リクエストIDをキャッシュに登録
+      if (requestId) {
+        processedRequests.set(requestId, Date.now());
+      }
+
       return res.status(200).send('ok');
     }
 
     // 3. 未ハンドル
     console.log('[CF] 未処理のイベント:', body.event);
+
+    // 未ハンドルのイベントもキャッシュに登録
+    if (requestId) {
+      processedRequests.set(requestId, Date.now());
+    }
+
     return res.status(200).send('ignored');
   } catch (err) {
     console.error('[CF] Error:', err);

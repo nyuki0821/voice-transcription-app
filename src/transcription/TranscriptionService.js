@@ -184,20 +184,31 @@ var TranscriptionService = (function () {
       return rawTranscription;
     }
 
+    // 短すぎるテキストの場合は早期リターン（ハルシネーション防止）
+    if (rawTranscription.length < 50) {
+      Logger.log('テキストが短すぎるため自然化処理をスキップします: ' + rawTranscription.substring(0, 30) + '...');
+      return rawTranscription;
+    }
+
     try {
       // OpenAI APIのエンドポイントURL
       var url = 'https://api.openai.com/v1/chat/completions';
 
-      // プロンプトの作成
+      // プロンプトの作成（ハルシネーション防止強化版）
       var prompt = "以下は営業電話の文字起こし結果です。文章を自然な日本語に整えてください。以下の点に特に注意してください：\n\n" +
-        "1. 事実や内容は一切変更しないこと\n" +
+        "1. 事実や内容は一切変更しないこと。内容を創作・追加・推測しないでください。\n" +
         "2. 話者の区別（【営業担当者】や【お客様】など）は必ず保持すること\n" +
         "3. 話者役割の判別基準：\n" +
         "   - 営業担当者：「弊社は〜」「ご案内させていただきました」「ご提供しております」など提案・紹介をする側\n" +
         "   - お客様：「検討します」「必要ありません」「確認します」など返答や判断をする側\n" +
-        "4. 各発言の前後関係を考慮し、会話の流れを自然にすること\n\n" +
+        "4. 各発言の前後関係を考慮し、会話の流れを自然になるよう文章を整形して下さい\n" +
+        "5. 会話が短い、断片的、不完全な場合は無理に創作・追加・推測せず、原文を整えるだけにして下さい。\n\n" +
         "重要：これは営業代行の会話であり、様々な会社が営業側として登場します。会社名に関わらず、話者の役割を話し方のパターンから正しく識別してください。\n\n" +
         rawTranscription;
+
+      // 文字起こしの長さによってチャンクサイズとトークン数を調整
+      var maxTokens = Math.min(4096, rawTranscription.length * 1.5);
+      if (maxTokens < 1024) maxTokens = 1024;
 
       // APIリクエストオプション
       var options = {
@@ -211,7 +222,11 @@ var TranscriptionService = (function () {
           messages: [
             {
               role: "system",
-              content: "あなたは営業電話の文字起こしを整形する専門家です。典型的な営業代行の通話では、次のような特徴があります：\n\n" +
+              content: "あなたは営業電話の文字起こしを整形する専門家です。実際に話された内容だけを自然な日本語に整えてください。\n\n" +
+                "重要な原則：\n" +
+                "1. 元のテキストにない情報は絶対に追加しないでください\n" +
+                "2. 不明瞭な部分は推測せず、そのままにしてください\n" +
+                "典型的な営業代行の通話では、次のような特徴があります：\n\n" +
                 "1. 営業担当者（電話をかける側）の特徴：\n" +
                 "- 「お忙しいところ恐れ入ります」「ご案内でご連絡しました」などの丁寧な表現\n" +
                 "- 自社サービスの紹介（「弊社は～」「ご提供しております」など）\n" +
@@ -229,8 +244,8 @@ var TranscriptionService = (function () {
               content: prompt
             }
           ],
-          temperature: 0.3,
-          max_tokens: 2048
+          temperature: 0.0, // ハルシネーション防止のため温度を0に設定
+          max_tokens: maxTokens
         }),
         muteHttpExceptions: true
       };
@@ -239,6 +254,7 @@ var TranscriptionService = (function () {
       var responseCode = response.getResponseCode();
 
       if (responseCode !== 200) {
+        Logger.log('OpenAI APIエラー: ' + responseCode + ', ' + response.getContentText());
         return rawTranscription; // 失敗した場合は元の文字起こし結果を返す
       }
 
@@ -252,8 +268,26 @@ var TranscriptionService = (function () {
 
       var enhancedText = responseJson.choices[0].message.content;
 
+      // 結果の検証（ハルシネーション検出）
+      if (enhancedText.length > rawTranscription.length * 1.5) {
+        // 結果が元のテキストに比べて極端に長くなった場合は疑わしい
+        Logger.log('自然化結果が過剰に長いため、元のテキストを返します。元:' + rawTranscription.length + '文字, 結果:' + enhancedText.length + '文字');
+        return rawTranscription;
+      }
+
+      // 話者ラベルが全て保持されているか確認（最低限のチェック）
+      var originalSpeakerCount = (rawTranscription.match(/【.*?】/g) || []).length;
+      var enhancedSpeakerCount = (enhancedText.match(/【.*?】/g) || []).length;
+
+      if (originalSpeakerCount > 0 && enhancedSpeakerCount < originalSpeakerCount * 0.8) {
+        // 話者ラベルが20%以上減少している場合は疑わしい
+        Logger.log('自然化結果で話者ラベルが大幅に減少しています。元:' + originalSpeakerCount + '個, 結果:' + enhancedSpeakerCount + '個');
+        return rawTranscription;
+      }
+
       return enhancedText;
     } catch (error) {
+      Logger.log('文字起こし自然化中にエラー: ' + error.toString());
       return rawTranscription; // エラーが発生した場合は元の文字起こし結果を返す
     }
   }
