@@ -15,11 +15,11 @@ Zoom通話録音ファイルを文字起こしし、情報を抽出・分析す�
 
 ```mermaid
 flowchart TB
-    Z(Zoom Phone) -->|recording_completed| CF[Cloud Functions<br>(zoom-webhook-handler)]
-    CF --> Sheets[(Google Sheets<br>Recordings)]
+    Z(Zoom Phone) -->|recording_completed| CF[Cloud Functions\n(zoom-webhook-handler)]
+    CF --> Sheets[(Google Sheets\nRecordings)]
     subgraph GAS Project
       Trigger30((30 min Trigger)) --> ZP[ZoomphoneProcessor]
-      ZP -->|download & save| GD[(Google Drive<br>録音フォルダ)]
+      ZP -->|download & save| GD[(Google Drive\n録音フォルダ)]
       Trigger10((10 min Trigger)) --> TP[Transcription Pipeline]
       GD --> TP
       TP --> Sheets
