@@ -374,11 +374,26 @@ function processBatch() {
         var logId = 'log_' + new Date().getTime() + '_' + i;
 
         // 文字起こし処理
-        var transcriptionResult = TranscriptionService.transcribe(
-          file,
-          localSettings.ASSEMBLYAI_API_KEY,
-          localSettings.OPENAI_API_KEY
-        );
+        var transcriptionResult;
+        try {
+          transcriptionResult = TranscriptionService.transcribe(
+            file,
+            localSettings.ASSEMBLYAI_API_KEY,
+            localSettings.OPENAI_API_KEY
+          );
+        } catch (transcriptionError) {
+          Logger.log('文字起こし処理でエラーが発生: ' + transcriptionError.toString());
+
+          // 最低限の結果を生成して処理を続行
+          transcriptionResult = {
+            text: '【文字起こし失敗: ' + transcriptionError.toString() + '】',
+            rawText: '',
+            utterances: [],
+            speakerInfo: {},
+            speakerRoles: {},
+            fileName: file.getName()
+          };
+        }
 
         // 文字起こし結果のチェック
         Logger.log('文字起こし結果: 文字数=' + (transcriptionResult.text ? transcriptionResult.text.length : 0));
@@ -391,11 +406,27 @@ function processBatch() {
           throw new Error('OpenAI APIキーが設定されていないため、処理を続行できません');
         }
 
-        extractedInfo = InformationExtractor.extract(
-          transcriptionResult.text,
-          transcriptionResult.utterances,
-          localSettings.OPENAI_API_KEY
-        );
+        try {
+          extractedInfo = InformationExtractor.extract(
+            transcriptionResult.text,
+            transcriptionResult.utterances,
+            localSettings.OPENAI_API_KEY
+          );
+        } catch (extractionError) {
+          Logger.log('情報抽出処理でエラーが発生: ' + extractionError.toString());
+
+          // 最低限の情報を生成して処理を続行
+          extractedInfo = {
+            salesCompany: '不明（抽出エラー）',
+            salesPerson: '不明（抽出エラー）',
+            customerCompany: '不明（抽出エラー）',
+            customerName: '不明（抽出エラー）',
+            callStatus: '不明（抽出エラー）',
+            reasonForRefusal: '',
+            reasonForAppointment: '',
+            summary: '情報抽出に失敗しました: ' + extractionError.toString()
+          };
+        }
 
         // 抽出情報のチェック
         Logger.log('情報抽出結果: ' + JSON.stringify({

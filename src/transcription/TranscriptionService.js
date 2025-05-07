@@ -81,7 +81,7 @@ var TranscriptionService = (function () {
       var pollingResponseJson;
       var status = '';
       var pollingInterval = 3000; // 3秒ごとにポーリング
-      var maxPollingAttempts = 60; // 最大ポーリング回数（約3分）
+      var maxPollingAttempts = 100; // 最大ポーリング回数（約5分）- 延長
       var pollingAttempts = 0;
 
       while (status !== 'completed' && status !== 'error' && pollingAttempts < maxPollingAttempts) {
@@ -93,14 +93,38 @@ var TranscriptionService = (function () {
         status = pollingResponseJson.status;
 
         pollingAttempts++;
+
+        // 進捗状況をログに記録（10回ごと）
+        if (pollingAttempts % 10 === 0) {
+          Logger.log('文字起こし進捗: ステータス=' + status + ', 試行回数=' + pollingAttempts + '/' + maxPollingAttempts);
+        }
       }
 
+      // 処理中または完了でない場合でも部分的な結果がある場合は使用する
       if (status !== 'completed') {
-        throw new Error('文字起こし処理がタイムアウトまたはエラーが発生しました。ステータス: ' + status);
+        Logger.log('文字起こし処理が完全には完了していません。ステータス: ' + status + 'で続行を試みます');
+
+        // 文字起こし結果のURLを保存して後で確認できるようにする
+        Logger.log('後で結果を確認するためのURL: ' + pollingUrl);
+
+        // processingステータスでも部分的な結果があればそれを使用
+        if (status === 'processing' && pollingResponseJson.text) {
+          Logger.log('部分的な文字起こし結果を使用します（処理中）');
+          // 警告メッセージを追加
+          var warningText = "【注意: この文字起こしは処理が完全に完了していません。精度が低い可能性があります】\n\n";
+          pollingResponseJson.text = warningText + (pollingResponseJson.text || '');
+        } else {
+          // 完全にエラーの場合は例外をスロー
+          throw new Error('文字起こし処理がタイムアウトまたはエラーが発生しました。ステータス: ' + status);
+        }
       }
 
       // Assembly AIからの文字起こし結果を取得
       var text = pollingResponseJson.text || '';
+      if (!text) {
+        throw new Error('テキストが指定されていないか空です');
+      }
+
       var utterances = pollingResponseJson.utterances || [];
 
       // 会話から話者情報を抽出
@@ -109,18 +133,30 @@ var TranscriptionService = (function () {
 
       // 話者情報を含む形式でテキストを整形
       var formattedText = '';
-      for (var i = 0; i < utterances.length; i++) {
-        var utterance = utterances[i];
-        var speaker = utterance.speaker;
-        var speakerDisplay = formatSpeakerInfo(speaker, speakerInfo, speakerRoles);
 
-        formattedText += speakerDisplay + ' ' + utterance.text + '\n\n';
+      // utterancesがある場合は話者区分ありで整形
+      if (utterances && utterances.length > 0) {
+        for (var i = 0; i < utterances.length; i++) {
+          var utterance = utterances[i];
+          var speaker = utterance.speaker;
+          var speakerDisplay = formatSpeakerInfo(speaker, speakerInfo, speakerRoles);
+
+          formattedText += speakerDisplay + ' ' + utterance.text + '\n\n';
+        }
+      } else {
+        // 話者区分がない場合は単純に文字起こし結果をそのまま使用
+        formattedText = text;
       }
 
       // OpenAI GPT-4.1で文章を自然化（APIキーが提供されている場合）
       var enhancedText = formattedText;
-      if (openaiApiKey) {
-        enhancedText = enhanceTranscriptionWithOpenAI(formattedText, openaiApiKey);
+      if (openaiApiKey && formattedText.length > 50) {
+        try {
+          enhancedText = enhanceTranscriptionWithOpenAI(formattedText, openaiApiKey);
+        } catch (enhanceError) {
+          Logger.log('文章の自然化処理中にエラーが発生しました: ' + enhanceError.toString());
+          // エラーが発生しても元のフォーマット済みテキストを使用して処理を続行
+        }
       }
 
       // 返却前のポスト処理
