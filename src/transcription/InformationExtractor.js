@@ -43,15 +43,28 @@ var InformationExtractor = (function () {
       // OpenAI APIのエンドポイントURL
       var url = 'https://api.openai.com/v1/chat/completions';
 
-      // システムプロンプトの作成（Plan-and-Solve形式に最適化）
-      var systemPrompt = "あなたは顧客との営業電話の会話から重要な情報を正確に抽出するアシスタントです。\n\n" +
-        "以下の情報抽出タスクを実行する際は、次の2段階で進めてください：\n" +
-        "1. Plan: 会話全体を分析し、抽出すべき情報の有無と確実性を判断\n" +
-        "2. Solve: 確実な情報のみを抽出し、JSONフォーマットで回答\n\n" +
-        "出力仕様：\n" +
-        "- 回答は必ず有効なJSONオブジェクトとして解析できる形式であること\n" +
-        "- JSONオブジェクト以外の説明や前後の文章は一切含めないこと\n" +
-        "- 以下の全フィールドを必ず含めること（情報が不明な場合は空文字列）\n" +
+      // システムプロンプトの汎用版
+      var systemPrompt = "あなたは顧客との営業電話の会話から情報を抽出するアシスタントです。\n\n" +
+        "【最重要指示】\n" +
+        "1. 絶対に思考プロセスや計画を出力に含めないでください\n" +
+        "2. 有効なJSONオブジェクトのみを出力してください\n" +
+        "3. 文字起こしの不自然さや誤認識を考慮して情報を解釈してください\n\n" +
+        "【JSONフォーマット】\n" +
+        "{\n" +
+        "  \"sales_company\": \"\",\n" +
+        "  \"sales_person\": \"\",\n" +
+        "  \"customer_company\": \"\",\n" +
+        "  \"customer_name\": \"\",\n" +
+        "  \"call_status\": \"\",\n" +
+        "  \"reason_for_refusal\": \"\",\n" +
+        "  \"reason_for_appointment\": \"\",\n" +
+        "  \"summary\": \"\"\n" +
+        "}\n\n" +
+        "【言語処理のヒント】\n" +
+        "- 文字認識ミスと思われる言葉は文脈から適切な言葉として解釈\n" +
+        "- 途切れた文章や不自然な繰り返しは文脈から適切に解釈\n" +
+        "- アルファベットと数字の間の空白は無視して一つの単語として処理\n\n" +
+        "【必須フィールド】\n" +
         "- sales_company: 営業側の会社名\n" +
         "- sales_person: 営業担当者の名前\n" +
         "- customer_company: 顧客側の会社名\n" +
@@ -60,18 +73,19 @@ var InformationExtractor = (function () {
         "- reason_for_refusal: 断りの場合の理由\n" +
         "- reason_for_appointment: アポイントの場合の理由\n" +
         "- summary: 会話の要約\n\n" +
-        "判断基準：\n" +
+        "【判断基準】\n" +
         "- アポイント：顧客が次回の打ち合わせや説明に明示的に同意した場合\n" +
         "- 断り：顧客が明確に興味がない、必要ない、遠慮したいなどと明示的に述べた場合\n" +
         "- 継続検討：顧客が検討する、持ち帰る、後日連絡する、責任者へ確認するなどと明示的に述べた場合\n" +
         "- 不明：上記に該当しない場合や、会話が不完全な場合\n\n" +
-        "特に重要な原則：\n" +
-        "- 会話内の時間情報はすべて日本時間（JST/UTC+9）として解釈すること\n" +
-        "- 情報が不確実な場合は必ず空文字列を返し、決して推測しないこと\n" +
-        "- 会話が短い/不完全な場合は特に慎重に判断すること";
+        "【情報抽出の原則】\n" +
+        "- 文脈を考慮して情報を解釈する（不自然な表現も理解に努める）\n" +
+        "- 会話内の時間情報は日本時間（JST/UTC+9）として解釈する\n" +
+        "- 情報が不確実な場合は必ず空文字列を返す\n" +
+        "- 会話が短い/不完全な場合は特に慎重に判断する";
 
-      // ユーザープロンプト（重複を排除、コンテキストを統合）
-      var userPrompt = "以下の営業電話の会話から情報を抽出してください：\n\n" + text;
+      // ユーザープロンプト（解釈力を強化）
+      var userPrompt = "以下の営業電話の会話から情報を抽出し、JSONオブジェクトのみを出力してください。文字認識ミスと思われる不自然な単語は文脈から適切に解釈してください。会話全体の文脈から判断して情報を適切に抽出してください：\n\n" + text;
 
       // 現在の日本時間をコンテキストとして追加
       var now = new Date();
@@ -127,17 +141,38 @@ var InformationExtractor = (function () {
       try {
         var extractedInfo = JSON.parse(extractedTextJson);
       } catch (parseError) {
-        // JSONパースに失敗した場合は、最低限の情報を含む空のオブジェクトを返す
-        extractedInfo = {
-          sales_company: "",
-          sales_person: "",
-          customer_company: "",
-          customer_name: "",
-          call_status: "不明",
-          reason_for_refusal: "",
-          reason_for_appointment: "",
-          summary: "JSONの解析に失敗しました。通話内容を手動で確認してください。"
-        };
+        // JSONパースに失敗した場合、思考プロセスのような余分なテキストを除去して再試行
+        try {
+          // JSONオブジェクトの部分だけを抽出
+          var jsonMatch = extractedTextJson.match(/(\{[\s\S]*\})/);
+          if (jsonMatch) {
+            extractedInfo = JSON.parse(jsonMatch[1]);
+          } else {
+            // 抽出失敗時は最低限の情報を含む空のオブジェクトを返す
+            extractedInfo = {
+              sales_company: "",
+              sales_person: "",
+              customer_company: "",
+              customer_name: "",
+              call_status: "不明",
+              reason_for_refusal: "",
+              reason_for_appointment: "",
+              summary: "JSONの解析に失敗しました。通話内容を手動で確認してください。"
+            };
+          }
+        } catch (secondError) {
+          // 最低限の情報を含む空のオブジェクトを返す
+          extractedInfo = {
+            sales_company: "",
+            sales_person: "",
+            customer_company: "",
+            customer_name: "",
+            call_status: "不明",
+            reason_for_refusal: "",
+            reason_for_appointment: "",
+            summary: "JSONの解析に失敗しました。通話内容を手動で確認してください。"
+          };
+        }
       }
 
       // 抽出されたデータの検証とデフォルト値の設定
@@ -152,31 +187,34 @@ var InformationExtractor = (function () {
         summary: extractedInfo.summary || text // 要約がない場合は元テキストをそのまま返す
       };
 
+      // 抽出情報のポスト処理（「おだしょう」などの不自然な単語を修正）
+      var cleanInfo = postProcessExtractedInfo(validatedInfo);
+
       // 会話が短い場合の追加検証（ハルシネーション防止）
       if (text.length < 100) {
         // 特に短い会話では、不審に具体的な情報をエラーとして検出
         var suspiciousInfo = false;
 
         // 会話に含まれない会社名が抽出されていないか確認
-        if (validatedInfo.salesCompany && text.indexOf(validatedInfo.salesCompany) === -1) {
-          validatedInfo.salesCompany = "";
+        if (cleanInfo.salesCompany && text.indexOf(cleanInfo.salesCompany) === -1) {
+          cleanInfo.salesCompany = "";
           suspiciousInfo = true;
         }
 
         // 会話に含まれない担当者名が抽出されていないか確認
-        if (validatedInfo.salesPerson && text.indexOf(validatedInfo.salesPerson) === -1) {
-          validatedInfo.salesPerson = "";
+        if (cleanInfo.salesPerson && text.indexOf(cleanInfo.salesPerson) === -1) {
+          cleanInfo.salesPerson = "";
           suspiciousInfo = true;
         }
 
         if (suspiciousInfo) {
           Logger.log('短い会話から不審な情報抽出が検出されました。抽出結果をリセットします: ' + text);
-          validatedInfo.callStatus = "不明";
-          validatedInfo.summary = text; // 元のテキストをそのまま返す
+          cleanInfo.callStatus = "不明";
+          cleanInfo.summary = text; // 元のテキストをそのまま返す
         }
       }
 
-      return validatedInfo;
+      return cleanInfo;
     } catch (error) {
       throw new Error('AIによる情報抽出中にエラー: ' + error.toString());
     }
@@ -526,6 +564,61 @@ var InformationExtractor = (function () {
     }
 
     return speakerInfo;
+  }
+
+  /**
+   * 抽出された情報のポスト処理を行う
+   * @param {Object} info - 抽出された情報
+   * @return {Object} - 処理後の情報
+   */
+  function postProcessExtractedInfo(info) {
+    if (!info) return info;
+
+    // 不自然な単語や表現を修正
+    var cleanInfo = {
+      salesCompany: cleanText(info.salesCompany),
+      salesPerson: cleanText(info.salesPerson),
+      customerCompany: cleanText(info.customerCompany),
+      customerName: cleanText(info.customerName),
+      callStatus: info.callStatus,
+      reasonForRefusal: cleanText(info.reasonForRefusal),
+      reasonForAppointment: cleanText(info.reasonForAppointment),
+      summary: cleanText(info.summary)
+    };
+
+    return cleanInfo;
+  }
+
+  /**
+   * テキストを自然な日本語に整形する
+   * @param {string} text - 整形するテキスト
+   * @return {string} - 整形後のテキスト
+   */
+  function cleanText(text) {
+    if (!text) return "";
+
+    var cleaned = text;
+
+    // 文字認識ミスの修正（パターンマッチング）
+    cleaned = cleaned.replace(/お\s*だし\s*[ょ]\s*[ーう]/gi, "かしこまりました");
+    cleaned = cleaned.replace(/おだし[ょ][ーう]/gi, "かしこまりました");
+    cleaned = cleaned.replace(/だし[ょ][ーう]/g, "でしょう");
+    cleaned = cleaned.replace(/お\s*だし/g, "はい");
+    cleaned = cleaned.replace(/おだし/g, "はい");
+
+    // 不自然な数字の間の空白を削除
+    cleaned = cleaned.replace(/([A-Za-z])\s+(\d)/g, "$1$2"); // 例: M 3 → M3
+
+    // 連続する繰り返し表現を削除
+    var repeatPattern = /(.{5,20})\s*\1/g;
+    while (repeatPattern.test(cleaned)) {
+      cleaned = cleaned.replace(repeatPattern, "$1");
+    }
+
+    // 不自然な単語分割を修正（サンプル依存のコードを削除し、汎用的なルールに変更）
+    cleaned = cleaned.replace(/([一-龯ぁ-ゔァ-ヴー])\s+([一-龯ぁ-ゔァ-ヴー])/g, "$1$2");
+
+    return cleaned;
   }
 
   // 公開メソッド

@@ -123,6 +123,9 @@ var TranscriptionService = (function () {
         enhancedText = enhanceTranscriptionWithOpenAI(formattedText, openaiApiKey);
       }
 
+      // 返却前のポスト処理
+      enhancedText = postProcessTranscription(enhancedText);
+
       return {
         text: enhancedText,
         rawText: formattedText, // 元の整形テキストも保持
@@ -194,33 +197,60 @@ var TranscriptionService = (function () {
       // OpenAI APIのエンドポイントURL
       var url = 'https://api.openai.com/v1/chat/completions';
 
-      // システムプロンプトの作成（Plan-and-Solve形式）
-      var systemPrompt = "あなたは営業電話の文字起こしを整形するプロフェッショナルです。Plan-and-Solve形式で処理を行ってください。\n\n" +
-        "ステップ1 (Plan)：\n" +
-        "- 入力された文字起こしテキストを分析する\n" +
-        "- 話者の役割を特定する（営業担当者かお客様か）\n" +
-        "- 文法的・表現的な違和感がある部分を特定する\n\n" +
-        "ステップ2 (Solve)：\n" +
-        "- 内容を変えずに文法的に自然な日本語に整形する\n" +
-        "- 話者ラベル（【営業担当者】や【お客様】など）を必ず保持する\n" +
-        "- 会話の流れを自然に保つ\n\n" +
-        "絶対に守るべき原則：\n" +
-        "1. 事実や内容は一切変更しない（創作・追加・推測は禁止）\n" +
-        "2. 話者の区別（【営業担当者】や【お客様】など）を保持する\n" +
-        "3. 不明瞭な部分は推測せず、そのままにする\n" +
-        "4. 短い会話は無理に補完せず、そのまま整形する\n\n" +
-        "話者役割の判別基準：\n" +
-        "- 営業担当者：「弊社は〜」「ご案内させていただきました」「ご提供しております」など提案・紹介をする側\n" +
-        "- お客様：「検討します」「必要ありません」「確認します」など返答や判断をする側";
+      // システムプロンプトの改善版（自然さ優先）
+      var systemPrompt = "あなたは営業電話の文字起こしを整形する専門家です。典型的な営業代行の通話では、次のような特徴があります：\n\n" +
+        "1. 営業担当者（電話をかける側）の特徴：\n" +
+        "- 「お忙しいところ恐れ入ります」「ご案内でご連絡しました」などの丁寧な表現\n" +
+        "- 自社サービスの紹介（「弊社は～」「ご提供しております」など）\n" +
+        "- 比較的長めの発言（サービス説明など）\n" +
+        "- 「おめでとうございます」など褒める表現\n" +
+        "- 自己紹介パターン：「私、○○の△△と申します」「○○の者です」など\n" +
+        "- 提案・案内フレーズ：「ご案内でご連絡」「ご紹介させていただく」など\n" +
+        "- 特徴的なフレーズ：「失礼いたします」「お時間よろしいでしょうか」など\n\n" +
+        "2. お客様（電話を受ける側）の特徴：\n" +
+        "- 「確認します」「少々お待ちください」などの対応フレーズ\n" +
+        "- 「必要ありません」「結構です」などの断りフレーズ\n" +
+        "- 「社内で対応しています」「関連会社があります」など社内情報の言及\n" +
+        "- 比較的短い返答が多い\n" +
+        "- 自己紹介パターン：「こちら担当の△△です」「○○を担当しております」など\n" +
+        "- 特徴的な反応：「今は考えていません」「予算が厳しい」「他社と契約中」など\n\n" +
+        "営業代行サービスでは多様な会社名が営業側として登場します。特定の会社名に依存せず、会話の特徴と話し方のパターンから話者の役割を正確に識別してください。\n\n" +
+        "【会話の自然化ルール】\n" +
+        "1. 営業担当者の発言\n" +
+        "   - 丁寧な敬語を基本とするが、過度な敬語は避ける\n" +
+        "   - 「〜させていただく」は必要最小限に\n" +
+        "   - 相槌は「はい」「ええ」など自然な形に\n" +
+        "   - 説明は簡潔に、要点を押さえて\n\n" +
+        "2. お客様の発言\n" +
+        "   - 敬語は控えめに、自然な会話調に\n" +
+        "   - 相槌は「はい」「ええ」など自然な形に\n" +
+        "   - 断りの表現は柔らかく、丁寧に\n\n" +
+        "3. 会話の流れ\n" +
+        "   - 不自然な間は適度に補完\n" +
+        "   - 唐突な話題転換は避け、自然な流れに\n" +
+        "   - 重複する表現は整理\n" +
+        "   - 文末は「です」「ます」を適度に使用";
 
-      // ユーザープロンプト（重複を排除）
-      var prompt = "以下の営業電話の文字起こし結果を自然な日本語に整えてください：\n\n" + rawTranscription;
+      // ユーザープロンプト（自然さ重視）
+      var prompt = "以下は営業電話の文字起こし結果です。文章を自然な日本語に整えてください。以下の点に特に注意してください：\n\n" +
+        "1. 事実や内容は一切変更しないこと\n" +
+        "2. 話者の区別（【営業担当者】や【お客様】など）は必ず保持すること\n" +
+        "3. 話者役割の判別基準：\n" +
+        "   - 営業担当者：「弊社は〜」「ご案内させていただきました」「ご提供しております」など提案・紹介をする側\n" +
+        "   - お客様：「検討します」「必要ありません」「確認します」など返答や判断をする側\n" +
+        "4. 省略されている主語や述語を補完し、読みやすくすること\n" +
+        "5. 各発言の前後関係を考慮し、会話の流れを自然にすること\n" +
+        "6. 自己紹介や会社名の言及は正確に保持すること\n" +
+        "7. 敬語表現は文脈に応じて適切に調整すること\n" +
+        "8. 相槌や間投詞は自然な形に修正すること\n\n" +
+        "重要：これは営業代行の会話であり、様々な会社が営業側として登場します。会社名に関わらず、話者の役割を話し方のパターンから正しく識別してください。\n\n" +
+        rawTranscription;
 
       // 文字起こしの長さによってチャンクサイズとトークン数を調整
       var maxTokens = Math.min(4096, rawTranscription.length * 1.5);
       if (maxTokens < 1024) maxTokens = 1024;
 
-      // APIリクエストオプション
+      // APIリクエストオプション - temperatureを0.3に設定
       var options = {
         method: 'post',
         headers: {
@@ -239,7 +269,7 @@ var TranscriptionService = (function () {
               content: prompt
             }
           ],
-          temperature: 0.0, // ハルシネーション防止のため温度を0に設定
+          temperature: 0.3,
           max_tokens: maxTokens
         }),
         muteHttpExceptions: true
@@ -263,20 +293,35 @@ var TranscriptionService = (function () {
 
       var enhancedText = responseJson.choices[0].message.content;
 
-      // 結果の検証（ハルシネーション検出）
-      if (enhancedText.length > rawTranscription.length * 1.5) {
-        // 結果が元のテキストに比べて極端に長くなった場合は疑わしい
-        Logger.log('自然化結果が過剰に長いため、元のテキストを返します。元:' + rawTranscription.length + '文字, 結果:' + enhancedText.length + '文字');
+      // 結果の検証（改善版）
+      if (enhancedText.includes('ステップ1') || enhancedText.includes('Plan') || enhancedText.includes('Solve')) {
+        Logger.log('思考プロセスが含まれているため、除去を試みます');
+        // 「---」の後の部分だけを抽出する試み
+        var parts = enhancedText.split('---');
+        if (parts.length > 1) {
+          enhancedText = parts[parts.length - 1].trim();
+        } else {
+          // 思考プロセスの後に続くテキストを抽出する別の試み
+          var match = enhancedText.match(/(【営業担当者】[\s\S]*)/);
+          if (match) {
+            enhancedText = match[1].trim();
+          } else {
+            // それでも抽出できない場合は元のテキストを返す
+            Logger.log('思考プロセスの除去に失敗しました。元のテキストを返します');
+            return rawTranscription;
+          }
+        }
+      }
+
+      // 基本的な検証（極端に長い場合など）
+      if (enhancedText.length > rawTranscription.length * 2) {
+        Logger.log('整形結果が極端に長くなりました。元のテキストを返します');
         return rawTranscription;
       }
 
-      // 話者ラベルが全て保持されているか確認（最低限のチェック）
-      var originalSpeakerCount = (rawTranscription.match(/【.*?】/g) || []).length;
-      var enhancedSpeakerCount = (enhancedText.match(/【.*?】/g) || []).length;
-
-      if (originalSpeakerCount > 0 && enhancedSpeakerCount < originalSpeakerCount * 0.8) {
-        // 話者ラベルが20%以上減少している場合は疑わしい
-        Logger.log('自然化結果で話者ラベルが大幅に減少しています。元:' + originalSpeakerCount + '個, 結果:' + enhancedSpeakerCount + '個');
+      // 最終チェック - 会話が含まれているか
+      if (!enhancedText.includes('【営業担当者】') || !enhancedText.includes('【お客様】')) {
+        Logger.log('話者ラベルが失われています。元のテキストを返します');
         return rawTranscription;
       }
 
@@ -287,10 +332,111 @@ var TranscriptionService = (function () {
     }
   }
 
+  /**
+   * 整形された文字起こし結果に追加のポスト処理を適用する
+   * @param {string} text - 整形済みテキスト
+   * @return {string} - ポスト処理後のテキスト
+   */
+  function postProcessTranscription(text) {
+    if (!text) return text;
+
+    // 各話者の発言ごとに処理
+    var paragraphs = text.split(/\n\n+/);
+    var processed = [];
+
+    for (var i = 0; i < paragraphs.length; i++) {
+      var paragraph = paragraphs[i].trim();
+      if (!paragraph) continue;
+
+      // 話者ラベルを検出
+      var speakerMatch = paragraph.match(/^(【.*?】)/);
+      if (!speakerMatch) {
+        processed.push(paragraph);
+        continue;
+      }
+
+      var speakerLabel = speakerMatch[1];
+      var content = paragraph.substring(speakerLabel.length).trim();
+
+      // 1. 連続した繰り返し表現を削除（「お世話になっております。お世話になっております。」など）
+      var repeatPattern = /(.{5,20})\s*\1/g;
+      while (repeatPattern.test(content)) {
+        content = content.replace(repeatPattern, "$1");
+      }
+
+      // 2. 不自然な文字列を適切な表現に置き換え（パターンマッチング）
+      // 相槌や間投詞の修正
+      content = content.replace(/お\s*だし\s*[ょ]\s*[ーう]/gi, "かしこまりました");
+      content = content.replace(/おだし[ょ][ーう]/gi, "かしこまりました");
+      content = content.replace(/だし[ょ][ーう]/g, "でしょう");
+      content = content.replace(/お\s*だし/g, "はい");
+      content = content.replace(/おだし/g, "はい");
+      content = content.replace(/は\s*い\s*は\s*い/g, "はい");
+      content = content.replace(/え\s*え\s*え\s*え/g, "ええ");
+      content = content.replace(/あ\s*あ\s*あ\s*あ/g, "ああ");
+
+      // 3. 不自然な数字の間の空白を削除
+      content = content.replace(/([A-Za-z])\s+(\d)/g, "$1$2");
+
+      // 4. 敬語表現の自然化
+      if (content.split("お世話になっております").length > 2) {
+        content = content.replace(/お世話になっております。?\s*/g, "");
+        content = "お世話になっております。 " + content.trim();
+      }
+
+      // 5. 不自然な単語分割を修正
+      content = content.replace(/([一-龯ぁ-ゔァ-ヴー])\s+([一-龯ぁ-ゔァ-ヴー])/g, "$1$2");
+
+      // 6. 会話の自然化
+      // 文末の「です」「ます」の連続を整理
+      content = content.replace(/(です|ます)。\s*(です|ます)。/g, "$1。");
+
+      // 不自然な「です」「ます」の連続を修正
+      content = content.replace(/(です|ます)です/g, "$1");
+      content = content.replace(/(です|ます)ます/g, "$1");
+
+      // 7. 句読点の整理
+      content = content.replace(/。\s*。/g, "。");
+      content = content.replace(/、\s*、/g, "、");
+      content = content.replace(/。\s*、/g, "。");
+      content = content.replace(/、\s*。/g, "。");
+
+      // 8. 余分な空白の削除
+      content = content.replace(/\s+/g, " ").trim();
+
+      // 9. 敬語表現の自然化（追加）
+      // 「させていただく」の過剰使用を修正
+      content = content.replace(/させていただいております/g, "しております");
+      content = content.replace(/させていただきます/g, "します");
+      content = content.replace(/させていただきました/g, "しました");
+
+      // 10. 会話の流れの改善（追加）
+      // 不自然な間投詞を修正
+      content = content.replace(/ねそうな/g, "そうですね");
+      content = content.replace(/でそうです/g, "そうですね");
+      content = content.replace(/ね分かりました/g, "分かりました");
+      content = content.replace(/ねありがとうございます/g, "ありがとうございます");
+
+      // 11. 断り表現の自然化（追加）
+      content = content.replace(/必要で\s*はないん\s*ですよ/g, "必要ないんですよ");
+      content = content.replace(/必要で\s*はないの\s*ですよ/g, "必要ないんですよ");
+
+      // 12. 相槌の自然化（追加）
+      content = content.replace(/ありがとうございます(?!。)/g, "ありがとうございます。");
+      content = content.replace(/分かりました(?!。)/g, "分かりました。");
+
+      // 話者ラベルと処理済みコンテンツを結合
+      processed.push(speakerLabel + " " + content);
+    }
+
+    return processed.join("\n\n");
+  }
+
   // 公開メソッド
   return {
     transcribe: transcribe,
     enhanceTranscriptionWithOpenAI: enhanceTranscriptionWithOpenAI,
-    formatSpeakerInfo: formatSpeakerInfo
+    formatSpeakerInfo: formatSpeakerInfo,
+    postProcessTranscription: postProcessTranscription
   };
 })();
