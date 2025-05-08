@@ -549,14 +549,14 @@ function mergeTranscriptions(openaiResult, assemblyAIResult) {
     if (!segments || segments.length === 0) {
       Logger.log('GPT-4oからのセグメント情報がありません。文章ベースのマージ処理を実行します。');
 
-      // GPT-4o-miniによる高度なマージを試みる（OpenAI APIキーを使用）
+      // GPT-4.1 miniによる高度なマージを試みる（OpenAI APIキーを使用）
       try {
-        Logger.log('GPT-4o-miniによる高度なマージを試みます...');
+        Logger.log('GPT-4.1 miniによる高度なマージを試みます...');
         // getConfig()からAPIキーを再取得
         const config = getConfig();
         return enhanceDialogueWithGPT4Mini(openaiResult, assemblyAIResult, config.OPENAI_API_KEY);
       } catch (miniError) {
-        Logger.log('GPT-4o-miniによるマージでエラー: ' + miniError.toString());
+        Logger.log('GPT-4.1 miniによるマージでエラー: ' + miniError.toString());
         Logger.log('通常の文章ベースマージにフォールバックします。');
         return textBasedMerge(openaiResult, assemblyAIResult);
       }
@@ -1110,14 +1110,14 @@ function tryAssemblyAIV3Request(file, apiKey) {
 }
 
 /**
- * OpenAI GPT-4o-miniを使用して話者分離マージを洗練する
+ * OpenAI GPT-4.1 miniを使用して話者分離マージを洗練する
  * @param {Object} openaiTranscriptResult - GPT-4o Transcribeの結果
  * @param {Object} assemblyAIResult - AssemblyAIの結果
  * @param {string} apiKey - OpenAI APIキー
  * @return {Object} - マージした結果
  */
 function enhanceDialogueWithGPT4Mini(openaiTranscriptResult, assemblyAIResult, apiKey) {
-  Logger.log('GPT-4o-miniによる会話洗練処理を開始...');
+  Logger.log('GPT-4.1 miniによる会話洗練処理を開始...');
 
   try {
     // AssemblyAIの話者情報を抽出
@@ -1139,9 +1139,9 @@ function enhanceDialogueWithGPT4Mini(openaiTranscriptResult, assemblyAIResult, a
       speakerLabels[speakerId] = formatSpeakerLabel(speakerId, speakerRoles);
     });
 
-    // GPT-4o-miniに送るプロンプトを作成
+    // GPT-4.1 miniに送るプロンプトを作成
     const prompt = {
-      model: "gpt-4o-mini",
+      model: "gpt-4.1-mini",
       messages: [
         {
           role: "system",
@@ -1188,7 +1188,7 @@ ${JSON.stringify(speakerLabels)}
     const responseCode = response.getResponseCode();
 
     if (responseCode !== 200) {
-      Logger.log('GPT-4o-mini API呼び出しエラー: ' + responseCode);
+      Logger.log('GPT-4.1 mini API呼び出しエラー: ' + responseCode);
       Logger.log(response.getContentText());
       // エラー時は通常のマージ結果を返す
       return currentMergeResult;
@@ -1197,7 +1197,7 @@ ${JSON.stringify(speakerLabels)}
     const responseJson = JSON.parse(response.getContentText());
     const enhancedText = responseJson.choices[0].message.content;
 
-    Logger.log('GPT-4o-miniによる会話洗練処理が完了しました');
+    Logger.log('GPT-4.1 miniによる会話洗練処理が完了しました');
 
     return {
       text: enhancedText,
@@ -1209,7 +1209,7 @@ ${JSON.stringify(speakerLabels)}
     };
 
   } catch (error) {
-    Logger.log('GPT-4o-miniによる会話洗練処理中にエラー: ' + error.toString());
+    Logger.log('GPT-4.1 miniによる会話洗練処理中にエラー: ' + error.toString());
     // エラー時は通常のマージ結果を返す
     return textBasedMerge(openaiTranscriptResult, assemblyAIResult);
   }

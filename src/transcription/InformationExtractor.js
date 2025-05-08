@@ -43,49 +43,41 @@ var InformationExtractor = (function () {
       // OpenAI APIのエンドポイントURL
       var url = 'https://api.openai.com/v1/chat/completions';
 
-      // システムプロンプトの汎用版
-      var systemPrompt = "あなたは顧客との営業電話の会話から情報を抽出するアシスタントです。\n\n" +
-        "【最重要指示】\n" +
-        "1. 絶対に思考プロセスや計画を出力に含めないでください\n" +
-        "2. 有効なJSONオブジェクトのみを出力してください\n" +
-        "3. 文字起こしの不自然さや誤認識を考慮して情報を解釈してください\n\n" +
-        "【JSONフォーマット】\n" +
-        "{\n" +
-        "  \"sales_company\": \"\",\n" +
-        "  \"sales_person\": \"\",\n" +
-        "  \"customer_company\": \"\",\n" +
-        "  \"customer_name\": \"\",\n" +
-        "  \"call_status\": \"\",\n" +
-        "  \"reason_for_refusal\": \"\",\n" +
-        "  \"reason_for_appointment\": \"\",\n" +
-        "  \"summary\": \"\"\n" +
-        "}\n\n" +
-        "【言語処理のヒント】\n" +
-        "- 文字認識ミスと思われる言葉は文脈から適切な言葉として解釈\n" +
-        "- 途切れた文章や不自然な繰り返しは文脈から適切に解釈\n" +
-        "- アルファベットと数字の間の空白は無視して一つの単語として処理\n\n" +
-        "【必須フィールド】\n" +
-        "- sales_company: 営業側の会社名\n" +
-        "- sales_person: 営業担当者の名前\n" +
-        "- customer_company: 顧客側の会社名\n" +
-        "- customer_name: 顧客担当者の名前\n" +
-        "- call_status: 通話結果（アポイント、断り、継続検討、不明のいずれか）\n" +
-        "- reason_for_refusal: 断りの場合の理由\n" +
-        "- reason_for_appointment: アポイントの場合の理由\n" +
-        "- summary: 会話の要約\n\n" +
-        "【判断基準】\n" +
-        "- アポイント：顧客が次回の打ち合わせや説明に明示的に同意した場合\n" +
-        "- 断り：顧客が明確に興味がない、必要ない、遠慮したいなどと明示的に述べた場合\n" +
-        "- 継続検討：顧客が検討する、持ち帰る、後日連絡する、責任者へ確認するなどと明示的に述べた場合\n" +
-        "- 不明：上記に該当しない場合や、会話が不完全な場合\n\n" +
-        "【情報抽出の原則】\n" +
-        "- 文脈を考慮して情報を解釈する（不自然な表現も理解に努める）\n" +
-        "- 会話内の時間情報は日本時間（JST/UTC+9）として解釈する\n" +
-        "- 情報が不確実な場合は必ず空文字列を返す\n" +
-        "- 会話が短い/不完全な場合は特に慎重に判断する";
+      // システムプロンプトの簡略化版
+      var systemPrompt = "あなたは営業電話の会話から重要な情報を抽出する専門家です。以下のステップで情報を正確に抽出してください。\n\n" +
+        "【思考ステップ】\n" +
+        "1. 会話全体を注意深く読み、話の流れと話者を特定する\n" +
+        "2. 営業側と顧客側を明確に区別する\n" +
+        "3. 会社名や担当者名が明示的に述べられている部分を特定する\n" +
+        "4. 会話の結論（コンタクト、アポイント、断り、継続検討など）を判断する\n" +
+        "5. 会話の主要なポイントを要約する\n\n" +
+        "【行動ステップ】\n" +
+        "1. 特定した情報をJSONフィールドに適切に割り当てる\n" +
+        "2. 確証がない情報は空欄にする（推測しない）\n" +
+        "3. call_statusは定義に従って最も適切な値を選択する\n" +
+        "4. 思考プロセスは含めず、JSONオブジェクトのみを出力する\n\n" +
+        "【JSON形式】\n" +
+        "{\"sales_company\":\"\", \"sales_person\":\"\", \"customer_company\":\"\", \"customer_name\":\"\", " +
+        "\"call_status\":\"\", \"reason_for_refusal\":\"\", \"reason_for_appointment\":\"\", \"summary\":\"\"}\n\n" +
+        "【call_statusの定義】\n" +
+        "・アポイント：顧客が次回の打ち合わせに明確に同意した場合のみ\n" +
+        "・断り：顧客が明確に興味がない、必要ないと断った場合のみ\n" +
+        "・継続検討：担当者不在、忙しい、検討する、持ち帰る、後日連絡する等の場合\n" +
+        "・コンタクト：担当者本人と直接話ができた場合（最初に出た人が受付や他の人でなく担当者本人だった、または担当者に取り次いでもらえた場合）。但し、アポイントや断りには至らなかった場合のみ\n" +
+        "・不明：会話から判断できない場合のみ\n\n" +
+        "【重要なルール】\n" +
+        "・reason_for_refusalは断りの場合のみ入力\n" +
+        "・reason_for_appointmentはアポイントの場合のみ入力\n" +
+        "・確実な情報のみを抽出し、不明な場合は空欄にする\n" +
+        "・思考プロセスは出力に含めず、JSONオブジェクトのみを返すこと";
 
-      // ユーザープロンプト（解釈力を強化）
-      var userPrompt = "以下の営業電話の会話から情報を抽出し、JSONオブジェクトのみを出力してください。文字認識ミスと思われる不自然な単語は文脈から適切に解釈してください。会話全体の文脈から判断して情報を適切に抽出してください：\n\n" + text;
+      // ユーザープロンプト（思考プロセスを促す）
+      var userPrompt = "以下の営業電話の会話から重要な情報を抽出してください。\n\n" +
+        "1. まず営業担当者と顧客を特定し、それぞれの会社名と名前を見つけてください\n" +
+        "2. 次に会話の結果（アポイント、断り、継続検討、コンタクトのいずれか）を判断してください\n" +
+        "3. 断りの場合はその理由、アポイントの場合はその詳細を特定してください\n" +
+        "4. 最後に会話の要点を簡潔にまとめてください\n\n" +
+        "会話内容：\n\n" + text;
 
       // 現在の日本時間をコンテキストとして追加
       var now = new Date();
@@ -103,7 +95,7 @@ var InformationExtractor = (function () {
           'Authorization': 'Bearer ' + openaiApiKey
         },
         payload: JSON.stringify({
-          model: "gpt-4.1",
+          model: "gpt-4.1-mini",
           messages: [
             {
               role: "system",
@@ -114,9 +106,9 @@ var InformationExtractor = (function () {
               content: contextPrompt + "\n\n" + userPrompt
             }
           ],
-          temperature: 0.0, // ハルシネーション防止のため低温度に設定
+          temperature: 0,
           max_tokens: 1024,
-          response_format: { "type": "json_object" } // JSON形式で返すように明示的に指定
+          response_format: { "type": "json_object" }
         }),
         muteHttpExceptions: true
       };
@@ -125,54 +117,28 @@ var InformationExtractor = (function () {
       var responseCode = response.getResponseCode();
 
       if (responseCode !== 200) {
-        throw new Error('OpenAI APIからのレスポンスエラー: ' + responseCode + ', ' + response.getContentText());
+        throw new Error('OpenAI APIからのレスポンスエラー: ' + responseCode);
       }
 
       // レスポンスをJSONとしてパース
       var responseJson = JSON.parse(response.getContentText());
-
-      // OpenAI APIからのレスポンス構造に合わせて処理
-      if (!responseJson.choices || responseJson.choices.length === 0) {
-        throw new Error('OpenAI APIからの有効なレスポンスがありません');
-      }
-
       var extractedTextJson = responseJson.choices[0].message.content;
+      var extractedInfo;
 
       try {
-        var extractedInfo = JSON.parse(extractedTextJson);
+        extractedInfo = JSON.parse(extractedTextJson);
       } catch (parseError) {
-        // JSONパースに失敗した場合、思考プロセスのような余分なテキストを除去して再試行
-        try {
-          // JSONオブジェクトの部分だけを抽出
-          var jsonMatch = extractedTextJson.match(/(\{[\s\S]*\})/);
-          if (jsonMatch) {
-            extractedInfo = JSON.parse(jsonMatch[1]);
-          } else {
-            // 抽出失敗時は最低限の情報を含む空のオブジェクトを返す
-            extractedInfo = {
-              sales_company: "",
-              sales_person: "",
-              customer_company: "",
-              customer_name: "",
-              call_status: "不明",
-              reason_for_refusal: "",
-              reason_for_appointment: "",
-              summary: "JSONの解析に失敗しました。通話内容を手動で確認してください。"
-            };
-          }
-        } catch (secondError) {
-          // 最低限の情報を含む空のオブジェクトを返す
-          extractedInfo = {
-            sales_company: "",
-            sales_person: "",
-            customer_company: "",
-            customer_name: "",
-            call_status: "不明",
-            reason_for_refusal: "",
-            reason_for_appointment: "",
-            summary: "JSONの解析に失敗しました。通話内容を手動で確認してください。"
-          };
-        }
+        // JSONパースに失敗した場合の最低限の情報
+        extractedInfo = {
+          sales_company: "",
+          sales_person: "",
+          customer_company: "",
+          customer_name: "",
+          call_status: "不明",
+          reason_for_refusal: "",
+          reason_for_appointment: "",
+          summary: "JSONの解析に失敗しました。"
+        };
       }
 
       // 抽出されたデータの検証とデフォルト値の設定
@@ -184,10 +150,21 @@ var InformationExtractor = (function () {
         callStatus: validateCallStatus(extractedInfo.call_status) || "不明",
         reasonForRefusal: extractedInfo.reason_for_refusal || "",
         reasonForAppointment: extractedInfo.reason_for_appointment || "",
-        summary: extractedInfo.summary || text // 要約がない場合は元テキストをそのまま返す
+        summary: extractedInfo.summary || text
       };
 
-      // 抽出情報のポスト処理（「おだしょう」などの不自然な単語を修正）
+      // コールステータスに基づいた追加検証
+      // 断り以外の場合はreason_for_refusalを空にする
+      if (validatedInfo.callStatus !== "断り") {
+        validatedInfo.reasonForRefusal = "";
+      }
+
+      // アポイント以外の場合はreason_for_appointmentを空にする
+      if (validatedInfo.callStatus !== "アポイント") {
+        validatedInfo.reasonForAppointment = "";
+      }
+
+      // 抽出情報のポスト処理
       var cleanInfo = postProcessExtractedInfo(validatedInfo);
 
       // 会話が短い場合の追加検証（ハルシネーション防止）
@@ -231,22 +208,25 @@ var InformationExtractor = (function () {
     var normalizedStatus = String(status).trim();
 
     // 許可されたステータス値
-    var allowedStatuses = ["アポイント", "断り", "継続検討", "不明"];
+    var allowedStatuses = ["アポイント", "断り", "継続検討", "コンタクト", "不明"];
 
     if (allowedStatuses.indexOf(normalizedStatus) !== -1) {
       return normalizedStatus;
     }
 
-    // 類似のステータスを標準化
-    if (/アポ|訪問|面談|打ち合わせ/.test(normalizedStatus)) {
+    // 類似のステータスを標準化（正規表現を最適化）
+    if (/アポ|訪問|面談|打ち合わせ|日程/.test(normalizedStatus)) {
       return "アポイント";
-    } else if (/断り|拒否|お断り|見送り|不要|必要ない/.test(normalizedStatus)) {
+    } else if (/断り|拒否|お断り|不要|必要ない|興味がない/.test(normalizedStatus)) {
       return "断り";
-    } else if (/検討|持ち帰|考え|相談/.test(normalizedStatus)) {
+    } else if (/検討|持ち帰|考え|相談|不在|忙しい|後日/.test(normalizedStatus)) {
       return "継続検討";
+    } else if (/コンタクト|接触|担当者|本人|話した|話せた|取り次|代わった/.test(normalizedStatus)) {
+      return "コンタクト";
     }
 
-    return "不明";
+    // デフォルトでは継続検討として扱う
+    return "継続検討";
   }
 
   /**
@@ -502,7 +482,7 @@ var InformationExtractor = (function () {
 
     // 各話者の最初の数発言を分析（最初の方が自己紹介が多い）
     var processedSpeakers = {};
-    var analysisLimit = Math.min(10, utterances.length); // 最初の10発言のみ分析
+    var analysisLimit = Math.min(10, utterances.length);
 
     for (var i = 0; i < analysisLimit; i++) {
       var utterance = utterances[i];
@@ -599,15 +579,8 @@ var InformationExtractor = (function () {
 
     var cleaned = text;
 
-    // 文字認識ミスの修正（パターンマッチング）
-    cleaned = cleaned.replace(/お\s*だし\s*[ょ]\s*[ーう]/gi, "かしこまりました");
-    cleaned = cleaned.replace(/おだし[ょ][ーう]/gi, "かしこまりました");
-    cleaned = cleaned.replace(/だし[ょ][ーう]/g, "でしょう");
-    cleaned = cleaned.replace(/お\s*だし/g, "はい");
-    cleaned = cleaned.replace(/おだし/g, "はい");
-
     // 不自然な数字の間の空白を削除
-    cleaned = cleaned.replace(/([A-Za-z])\s+(\d)/g, "$1$2"); // 例: M 3 → M3
+    cleaned = cleaned.replace(/([A-Za-z])\s+(\d)/g, "$1$2");
 
     // 連続する繰り返し表現を削除
     var repeatPattern = /(.{5,20})\s*\1/g;
@@ -615,7 +588,7 @@ var InformationExtractor = (function () {
       cleaned = cleaned.replace(repeatPattern, "$1");
     }
 
-    // 不自然な単語分割を修正（サンプル依存のコードを削除し、汎用的なルールに変更）
+    // 不自然な単語分割を修正
     cleaned = cleaned.replace(/([一-龯ぁ-ゔァ-ヴー])\s+([一-龯ぁ-ゔァ-ヴー])/g, "$1$2");
 
     return cleaned;
