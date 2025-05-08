@@ -146,14 +146,17 @@ function setupRecordingsSheetTrigger() {
  * すべてのアプリケーショントリガーを一括で設定
  */
 function setupAllTriggers() {
-  var results = [
-    setupDailyZoomApiTokenRefresh(),
-    setupRecordingsSheetTrigger(),
-    setupZoomTriggers(),
-    setupTranscriptionTriggers()
-  ];
+  // 既存のトリガーを削除
+  removeAllProjectTriggers();
 
-  return results.join("\n");
+  // 各機能のトリガーを設定
+  setupZoomTriggers();
+  setupTranscriptionTriggers();
+  setupDailyZoomApiTokenRefresh();
+  setupRecordingsSheetTrigger();
+  setupInterruptedFilesRecoveryTrigger();
+
+  Logger.log('全トリガーが正常に設定されました');
 }
 
 /**
@@ -328,4 +331,51 @@ function getSystemSettings() {
       OPENAI_API_KEY: scriptProperties.getProperty('OPENAI_API_KEY') || ''
     };
   }
+}
+
+/**
+ * 中断ファイル復旧処理の定期実行トリガーを設定
+ */
+function setupInterruptedFilesRecoveryTrigger() {
+  try {
+    // 既存の該当トリガーを削除
+    deleteTriggerByFunctionName('recoverInterruptedFiles');
+
+    // 5分ごとに実行するトリガーを作成
+    ScriptApp.newTrigger('recoverInterruptedFiles')
+      .timeBased()
+      .everyMinutes(5)
+      .create();
+
+    Logger.log('中断ファイル復旧処理トリガーが正常に設定されました');
+  } catch (e) {
+    Logger.log('中断ファイル復旧処理トリガーの設定でエラーが発生しました: ' + e.toString());
+  }
+}
+
+/**
+ * 指定した関数名と完全一致するトリガーを削除するヘルパー関数
+ * @param {string} functionName - 削除対象のトリガーの関数名（完全一致）
+ */
+function deleteTriggerByFunctionName(functionName) {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    var trigger = triggers[i];
+    var handlerFunction = trigger.getHandlerFunction();
+    if (handlerFunction === functionName) {
+      ScriptApp.deleteTrigger(trigger);
+      Logger.log('トリガーを削除しました: ' + functionName);
+    }
+  }
+}
+
+/**
+ * プロジェクトのすべてのトリガーを削除する
+ */
+function removeAllProjectTriggers() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    ScriptApp.deleteTrigger(triggers[i]);
+  }
+  Logger.log('すべてのプロジェクトトリガーが削除されました');
 } 

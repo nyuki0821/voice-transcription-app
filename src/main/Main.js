@@ -552,6 +552,119 @@ function processBatch() {
 }
 
 /**
+ * 処理中フォルダにある未完了ファイルを未処理フォルダに戻す
+ * AppScriptの制限により中断されたファイルを復旧する
+ */
+function recoverInterruptedFiles() {
+  var startTime = new Date();
+  Logger.log('中断ファイル復旧処理開始: ' + startTime);
+
+  try {
+    // 設定を取得
+    var localSettings = getSystemSettings();
+
+    if (!localSettings.PROCESSING_FOLDER_ID) {
+      throw new Error('処理中フォルダIDが設定されていません');
+    }
+
+    if (!localSettings.SOURCE_FOLDER_ID) {
+      throw new Error('処理対象フォルダIDが設定されていません');
+    }
+
+    // 処理中フォルダのファイルを取得
+    var processingFolder = DriveApp.getFolderById(localSettings.PROCESSING_FOLDER_ID);
+    var files = processingFolder.getFiles();
+    var interruptedFiles = [];
+
+    while (files.hasNext()) {
+      var file = files.next();
+      var mimeType = file.getMimeType() || "";
+
+      // 音声ファイルのみを対象とする
+      if (mimeType.indexOf('audio/') === 0 ||
+        mimeType === 'application/octet-stream' ||
+        file.getName().toLowerCase().indexOf('.mp3') !== -1) {
+        interruptedFiles.push(file);
+      }
+    }
+
+    Logger.log('中断された可能性のあるファイル数: ' + interruptedFiles.length);
+
+    if (interruptedFiles.length === 0) {
+      return '中断されたファイルはありませんでした。';
+    }
+
+    // 復旧結果のトラッキング
+    var results = {
+      total: interruptedFiles.length,
+      recovered: 0,
+      failed: 0,
+      details: []
+    };
+
+    // ファイルを復旧
+    for (var i = 0; i < interruptedFiles.length; i++) {
+      var file = interruptedFiles[i];
+
+      try {
+        Logger.log('ファイル復旧処理: ' + file.getName());
+
+        // ファイルからメタデータを取得
+        var metadata = extractMetadataFromFile(file.getName());
+
+        if (metadata && metadata.recordId) {
+          // Recordingsシートの文字起こし状態を更新 (INTERRUPTED)
+          updateTranscriptionStatusByRecordId(
+            metadata.recordId,
+            'INTERRUPTED',
+            '',
+            Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
+          );
+        }
+
+        // ファイルを未処理フォルダに移動
+        FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
+
+        // 結果を記録
+        results.recovered++;
+        results.details.push({
+          fileName: file.getName(),
+          status: 'recovered',
+          message: '未処理フォルダに復旧しました'
+        });
+      } catch (error) {
+        Logger.log('ファイル復旧エラー: ' + error.toString());
+
+        results.failed++;
+        results.details.push({
+          fileName: file.getName(),
+          status: 'error',
+          message: error.toString()
+        });
+      }
+    }
+
+    // 処理結果のログ出力
+    var endTime = new Date();
+    var processingTime = (endTime - startTime) / 1000; // 秒単位
+
+    var summary = '中断ファイル復旧処理完了: ' +
+      '対象=' + results.total + '件, ' +
+      '復旧=' + results.recovered + '件, ' +
+      '失敗=' + results.failed + '件, ' +
+      '処理時間=' + processingTime + '秒';
+
+    Logger.log(summary);
+    return summary;
+
+  } catch (error) {
+    var errorMessage = '中断ファイル復旧処理でエラーが発生: ' + error.toString();
+    Logger.log(errorMessage);
+    return errorMessage;
+  }
+}
+
+/**
  * 録音IDに一致するRecordingsシートの行を検索し、文字起こし状態を更新する
  * @param {string} recordId - 録音ID
  * @param {string} status - 更新するステータス
