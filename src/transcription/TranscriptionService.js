@@ -132,6 +132,11 @@ var TranscriptionService = (function () {
       timestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
       timestampsPart += 'segment' + '\r\n';
 
+      // word-levelタイムスタンプも追加（両方指定して確実に取得）
+      let wordTimestampsPart = '--' + boundary + '\r\n';
+      wordTimestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
+      wordTimestampsPart += 'word' + '\r\n';
+
       // 最後の境界を追加
       let endPart = '--' + boundary + '--\r\n';
 
@@ -141,6 +146,7 @@ var TranscriptionService = (function () {
       const langPartBytes = Utilities.newBlob(langPart).getBytes();
       const responsePartBytes = Utilities.newBlob(responsePart).getBytes();
       const timestampsPartBytes = Utilities.newBlob(timestampsPart).getBytes();
+      const wordTimestampsPartBytes = Utilities.newBlob(wordTimestampsPart).getBytes();
       const tail = Utilities.newBlob(endPart).getBytes();
 
       // 全てのバイト配列を結合
@@ -151,6 +157,7 @@ var TranscriptionService = (function () {
         langPartBytes,
         responsePartBytes,
         timestampsPartBytes,
+        wordTimestampsPartBytes,
         tail
       );
 
@@ -180,9 +187,9 @@ var TranscriptionService = (function () {
       // レスポンスをJSONとしてパース
       const responseJson = JSON.parse(response.getContentText());
 
+      // シンプルに文字起こし結果を返す
       return {
         text: responseJson.text,
-        segments: responseJson.segments || [], // セグメント情報が含まれていなくても空配列を返す
         language: responseJson.language,
         duration: responseJson.duration,
         fileName: fileName
@@ -499,12 +506,10 @@ var TranscriptionService = (function () {
 5. 最後に、整理された会話全体を出力
 
 【重要ルール】
-- 会話の内容や事実を変更してはいけません
-- 発言の追加や削除はせず、整理と話者ラベルの修正のみ行ってください
-- 自信がない場合は提供された話者分離結果に従ってください
+- AssemblyAIで文字起こしした結果が正しいとは限りません。
+- 飛躍した推論は避ける必要があるものの、論理的に導かれる話者の分離や文章の整形は行なって下さい。
 - 各発話の前に話者ラベルを付け、発話ごとに適切に改行してください
-- 最終的な出力は読みやすく、自然な対話形式にしてください
-- すべての会話内容を漏れなく含めてください`
+- 最終的な出力は読みやすく、自然な対話形式にしてください`
           },
           {
             role: "user",
@@ -522,7 +527,7 @@ ${JSON.stringify(speakerLabels, null, 2)}
 1. まず、各発言者の特定：話者の特徴（言葉遣い、自己紹介、発言内容）から誰が話しているか判断
 2. 次に、話者の役割を判断：営業担当者、顧客、受付、自動音声など
 3. 連続した発言のグループ化：同じ話者の発言を自然にまとめる
-4. 最後に、整理された会話全体を出力
+4. 最後に、整理された会話全体を出力 (飛躍した推論は避ける必要があるものの、論理的に導かれる話者の分離や文章の整形は行なって下さい。)
 
 発言が切れ目なく繋がるよう注意し、会話の流れを崩さないように整理してください。最終的な出力は自然な対話形式で、各話者の発言が明確に区別できるようにしてください。`
           }

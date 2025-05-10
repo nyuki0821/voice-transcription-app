@@ -29,15 +29,40 @@ var InformationExtractor = (function () {
       if (text.length < 20) {
         Logger.log('テキストが短すぎるため解析を省略します: ' + text);
         return {
-          salesCompany: "",
-          salesPerson: "",
-          customerCompany: "",
-          customerName: "",
-          callStatus: "不明",
-          reasonForRefusal: "",
-          reasonForAppointment: "",
+          sales_company: "",
+          sales_person: "",
+          customer_company: "",
+          customer_name: "",
+          call_status1: "非コンタクト", // 短すぎる会話は非コンタクトに変更
+          call_status2: "",
+          reason_for_refusal: "",
+          reason_for_appointment: "",
           summary: text // 元のテキストをそのまま返す
         };
+      }
+
+      // 会話が短い、または中断されている場合の簡易判定
+      if (text.length < 150 ||
+        /また改め|また連絡|失礼します|失礼いたします|お時間.*ない|急いで|後で|担当者.*いない|取次.*できない/.test(text)) {
+        // 会話が短い、または中断を示す表現がある場合
+
+        // 具体的な製品説明があるかどうかを確認
+        var hasProductExplanation = /製品.*特徴|サービス.*特徴|具体的.*機能|活用方法|導入事例|料金.*プラン|詳細.*説明|メリット/.test(text);
+
+        if (!hasProductExplanation) {
+          Logger.log('会話が短いまたは中断されており、具体的な製品説明がないため非コンタクト判定: ' + text);
+          return {
+            sales_company: "",
+            sales_person: "",
+            customer_company: "",
+            customer_name: "",
+            call_status1: "非コンタクト",
+            call_status2: "",
+            reason_for_refusal: "",
+            reason_for_appointment: "",
+            summary: "会話が短いまたは中断されているため詳細な説明ができていません。"
+          };
+        }
       }
 
       // OpenAI APIのエンドポイントURL
@@ -49,22 +74,27 @@ var InformationExtractor = (function () {
         "1. 会話全体を注意深く読み、話の流れと話者を特定する\n" +
         "2. 営業側と顧客側を明確に区別する\n" +
         "3. 会社名や担当者名が明示的に述べられている部分を特定する\n" +
-        "4. 会話の結論（コンタクト、アポイント、断り、継続検討など）を判断する\n" +
+        "4. 会話の結論を以下の2つの観点で判断する：\n" +
+        "   - まず、担当者と製品・サービスの説明ができたか（コンタクト）\n" +
+        "   - 次に、コンタクトした場合の会話結果（アポイント、断り、継続）\n" +
         "5. 会話の主要なポイントを要約する\n\n" +
         "【行動ステップ】\n" +
         "1. 特定した情報をJSONフィールドに適切に割り当てる\n" +
         "2. 確証がない情報は空欄にする（推測しない）\n" +
-        "3. call_statusは定義に従って最も適切な値を選択する\n" +
+        "3. call_status1とcall_status2は必ず定義に従って適切な値を選択する\n" +
         "4. 思考プロセスは含めず、JSONオブジェクトのみを出力する\n\n" +
         "【JSON形式】\n" +
         "{\"sales_company\":\"\", \"sales_person\":\"\", \"customer_company\":\"\", \"customer_name\":\"\", " +
-        "\"call_status\":\"\", \"reason_for_refusal\":\"\", \"reason_for_appointment\":\"\", \"summary\":\"\"}\n\n" +
+        "\"call_status1\":\"\", \"call_status2\":\"\", \"reason_for_refusal\":\"\", \"reason_for_appointment\":\"\", \"summary\":\"\"}\n\n" +
         "【call_statusの定義】\n" +
-        "・アポイント：顧客が次回の打ち合わせに明確に同意した場合のみ\n" +
-        "・断り：顧客が明確に興味がない、必要ないと断った場合のみ\n" +
-        "・継続検討：担当者不在、忙しい、検討する、持ち帰る、後日連絡する等の場合\n" +
-        "・コンタクト：担当者本人と直接話ができた場合（最初に出た人が受付や他の人でなく担当者本人だった、または担当者に取り次いでもらえた場合）。但し、アポイントや断りには至らなかった場合のみ\n" +
-        "・不明：会話から判断できない場合のみ\n\n" +
+        "・call_status1：\n" +
+        "  ・コンタクト: 担当者に関わらず、製品・サービスの詳細な説明ができた場合。単に「ご案内」と言っただけでは不十分で、製品・サービスの具体的な内容や特徴について説明できた場合のみ。\n" +
+        "  ・非コンタクト: 自動音声のみや、受付で止まった場合。製品・サービスの説明ができなかった場合。担当者不在や取次ぎ失敗で詳細説明ができなかった場合も含む。会話が短く中断された場合も非コンタクト。\n" +
+        "・call_status2（call_status1が「コンタクト」の場合のみ入力）：\n" +
+        "  ・アポイント: 次回のアポイントを取得できた場合\n" +
+        "  ・断り: 明確に興味がない、必要ないと断られた場合\n" +
+        "  ・継続: 検討する、持ち帰る等で終話した場合\n" +
+        "・不明: 文章が短すぎる等で判断できない場合は不明と入力\n\n" +
         "【重要なルール】\n" +
         "・reason_for_refusalは断りの場合のみ入力\n" +
         "・reason_for_appointmentはアポイントの場合のみ入力\n" +
@@ -74,7 +104,9 @@ var InformationExtractor = (function () {
       // ユーザープロンプト（思考プロセスを促す）
       var userPrompt = "以下の営業電話の会話から重要な情報を抽出してください。\n\n" +
         "1. まず営業担当者と顧客を特定し、それぞれの会社名と名前を見つけてください\n" +
-        "2. 次に会話の結果（アポイント、断り、継続検討、コンタクトのいずれか）を判断してください\n" +
+        "2. 次に会話の結果を2段階で判定してください：\n" +
+        "   a) call_status1: 担当者と製品・サービスの説明ができたか（コンタクト/非コンタクト）\n" +
+        "   b) call_status2: コンタクトの場合の成果（アポイント/断り/継続）\n" +
         "3. 断りの場合はその理由、アポイントの場合はその詳細を特定してください\n" +
         "4. 最後に会話の要点を簡潔にまとめてください\n\n" +
         "会話内容：\n\n" + text;
@@ -134,7 +166,8 @@ var InformationExtractor = (function () {
           sales_person: "",
           customer_company: "",
           customer_name: "",
-          call_status: "不明",
+          call_status1: "不明",
+          call_status2: "",
           reason_for_refusal: "",
           reason_for_appointment: "",
           summary: "JSONの解析に失敗しました。"
@@ -143,29 +176,38 @@ var InformationExtractor = (function () {
 
       // 抽出されたデータの検証とデフォルト値の設定
       var validatedInfo = {
-        salesCompany: extractedInfo.sales_company || "",
-        salesPerson: extractedInfo.sales_person || "",
-        customerCompany: extractedInfo.customer_company || "",
-        customerName: extractedInfo.customer_name || "",
-        callStatus: validateCallStatus(extractedInfo.call_status) || "不明",
-        reasonForRefusal: extractedInfo.reason_for_refusal || "",
-        reasonForAppointment: extractedInfo.reason_for_appointment || "",
+        sales_company: extractedInfo.sales_company || "",
+        sales_person: extractedInfo.sales_person || "",
+        customer_company: extractedInfo.customer_company || "",
+        customer_name: extractedInfo.customer_name || "",
+        call_status1: validateCallStatus1(extractedInfo.call_status1) || "不明",
+        call_status2: validateCallStatus2(extractedInfo.call_status2, extractedInfo.call_status1) || "",
+        reason_for_refusal: extractedInfo.reason_for_refusal || "",
+        reason_for_appointment: extractedInfo.reason_for_appointment || "",
         summary: extractedInfo.summary || text
       };
 
       // コールステータスに基づいた追加検証
       // 断り以外の場合はreason_for_refusalを空にする
-      if (validatedInfo.callStatus !== "断り") {
-        validatedInfo.reasonForRefusal = "";
+      if (validatedInfo.call_status2 !== "断り") {
+        validatedInfo.reason_for_refusal = "";
       }
 
       // アポイント以外の場合はreason_for_appointmentを空にする
-      if (validatedInfo.callStatus !== "アポイント") {
-        validatedInfo.reasonForAppointment = "";
+      if (validatedInfo.call_status2 !== "アポイント") {
+        validatedInfo.reason_for_appointment = "";
+      }
+
+      // 非コンタクトの場合はcall_status2を空にする
+      if (validatedInfo.call_status1 !== "コンタクト") {
+        validatedInfo.call_status2 = "";
       }
 
       // 抽出情報のポスト処理
       var cleanInfo = postProcessExtractedInfo(validatedInfo);
+
+      // デバッグ用：最終出力の内容をログに記録
+      Logger.log('情報抽出結果 (JSON): ' + JSON.stringify(cleanInfo));
 
       // 会話が短い場合の追加検証（ハルシネーション防止）
       if (text.length < 100) {
@@ -173,20 +215,21 @@ var InformationExtractor = (function () {
         var suspiciousInfo = false;
 
         // 会話に含まれない会社名が抽出されていないか確認
-        if (cleanInfo.salesCompany && text.indexOf(cleanInfo.salesCompany) === -1) {
-          cleanInfo.salesCompany = "";
+        if (cleanInfo.sales_company && text.indexOf(cleanInfo.sales_company) === -1) {
+          cleanInfo.sales_company = "";
           suspiciousInfo = true;
         }
 
         // 会話に含まれない担当者名が抽出されていないか確認
-        if (cleanInfo.salesPerson && text.indexOf(cleanInfo.salesPerson) === -1) {
-          cleanInfo.salesPerson = "";
+        if (cleanInfo.sales_person && text.indexOf(cleanInfo.sales_person) === -1) {
+          cleanInfo.sales_person = "";
           suspiciousInfo = true;
         }
 
         if (suspiciousInfo) {
           Logger.log('短い会話から不審な情報抽出が検出されました。抽出結果をリセットします: ' + text);
-          cleanInfo.callStatus = "不明";
+          cleanInfo.call_status1 = "不明";
+          cleanInfo.call_status2 = "";
           cleanInfo.summary = text; // 元のテキストをそのまま返す
         }
       }
@@ -198,35 +241,73 @@ var InformationExtractor = (function () {
   }
 
   /**
-   * call_statusの値を検証する
-   * @param {string} status - 抽出されたcall_status
-   * @return {string} - 検証済みのcall_status
+   * call_status1の値を検証する
+   * @param {string} status - 抽出されたcall_status1
+   * @return {string} - 検証済みのcall_status1
    */
-  function validateCallStatus(status) {
+  function validateCallStatus1(status) {
     if (!status) return "不明";
 
     var normalizedStatus = String(status).trim();
 
-    // 許可されたステータス値
-    var allowedStatuses = ["アポイント", "断り", "継続検討", "コンタクト", "不明"];
+    // 許可されたステータス値（コンタクトと非コンタクトの二択のみ）
+    var allowedStatuses = ["コンタクト", "非コンタクト", "不明"];
 
     if (allowedStatuses.indexOf(normalizedStatus) !== -1) {
       return normalizedStatus;
     }
 
-    // 類似のステータスを標準化（正規表現を最適化）
-    if (/アポ|訪問|面談|打ち合わせ|日程/.test(normalizedStatus)) {
-      return "アポイント";
-    } else if (/断り|拒否|お断り|不要|必要ない|興味がない/.test(normalizedStatus)) {
-      return "断り";
-    } else if (/検討|持ち帰|考え|相談|不在|忙しい|後日/.test(normalizedStatus)) {
-      return "継続検討";
-    } else if (/コンタクト|接触|担当者|本人|話した|話せた|取り次|代わった/.test(normalizedStatus)) {
+    // call_status2に属するステータスがcall_status1に入ってしまった場合の対応
+    if (/アポイント|断り|継続/.test(normalizedStatus)) {
+      // デフォルトは「コンタクト」と見なす（アポ/断り/継続はコンタクト前提のため）
       return "コンタクト";
     }
 
-    // デフォルトでは継続検討として扱う
-    return "継続検討";
+    // 類似のステータスを標準化
+    if (/製品.*詳細説明|サービス.*詳細説明|具体的.*説明|詳しく説明|プレゼン.*できた|十分.*紹介/.test(normalizedStatus)) {
+      return "コンタクト";
+    } else if (/自動音声|受付|説明.*できなかった|非コンタクト|取次.*失敗|担当者.*不在|担当者.*いない|また改め|短い会話|中断/.test(normalizedStatus)) {
+      return "非コンタクト";
+    }
+
+    // デフォルトでは不明として扱う
+    return "不明";
+  }
+
+  /**
+   * call_status2の値を検証する
+   * @param {string} status - 抽出されたcall_status2
+   * @param {string} status1 - 抽出されたcall_status1
+   * @return {string} - 検証済みのcall_status2
+   */
+  function validateCallStatus2(status, status1) {
+    // call_status1が「コンタクト」でない場合は空文字を返す
+    if (validateCallStatus1(status1) !== "コンタクト") {
+      return "";
+    }
+
+    if (!status) return "継続"; // コンタクトの場合、デフォルトは継続
+
+    var normalizedStatus = String(status).trim();
+
+    // 許可されたステータス値
+    var allowedStatuses = ["アポイント", "断り", "継続", "不明"];
+
+    if (allowedStatuses.indexOf(normalizedStatus) !== -1) {
+      return normalizedStatus;
+    }
+
+    // 類似のステータスを標準化
+    if (/アポ|アポイント|訪問|面談|打ち合わせ|日程|伺|承諾/.test(normalizedStatus)) {
+      return "アポイント";
+    } else if (/断り|断わり|拒否|お断り|不要|必要ない|興味がない|結構/.test(normalizedStatus)) {
+      return "断り";
+    } else if (/検討|持ち帰|考え|相談|確認|後日|連絡|担当者|継続/.test(normalizedStatus)) {
+      return "継続";
+    }
+
+    // デフォルトでは継続として扱う
+    return "継続";
   }
 
   /**
@@ -556,13 +637,14 @@ var InformationExtractor = (function () {
 
     // 不自然な単語や表現を修正
     var cleanInfo = {
-      salesCompany: cleanText(info.salesCompany),
-      salesPerson: cleanText(info.salesPerson),
-      customerCompany: cleanText(info.customerCompany),
-      customerName: cleanText(info.customerName),
-      callStatus: info.callStatus,
-      reasonForRefusal: cleanText(info.reasonForRefusal),
-      reasonForAppointment: cleanText(info.reasonForAppointment),
+      sales_company: cleanText(info.sales_company),
+      sales_person: cleanText(info.sales_person),
+      customer_company: cleanText(info.customer_company),
+      customer_name: cleanText(info.customer_name),
+      call_status1: info.call_status1,
+      call_status2: info.call_status2,
+      reason_for_refusal: cleanText(info.reason_for_refusal),
+      reason_for_appointment: cleanText(info.reason_for_appointment),
       summary: cleanText(info.summary)
     };
 

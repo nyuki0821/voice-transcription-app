@@ -269,8 +269,8 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       Logger.log('シートが存在しないため新規作成します: ' + sheetName);
       sheet = spreadsheet.insertSheet(sheetName);
       // ヘッダー行を設定
-      sheet.getRange(1, 1, 1, 14).setValues([
-        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'sales_person', 'customer_phone_number', 'customer_company', 'customer_name', 'call_status', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
+      sheet.getRange(1, 1, 1, 15).setValues([
+        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'sales_person', 'customer_phone_number', 'customer_company', 'customer_name', 'call_status1', 'call_status2', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
       ]);
     }
 
@@ -290,7 +290,8 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       callData.customerPhoneNumber || '',
       callData.customerCompany || '',
       callData.customerName || '',
-      callData.callStatus || '',
+      callData.callStatus1 || '',
+      callData.callStatus2 || '',
       callData.reasonForRefusal || '',
       callData.reasonForAppointment || '',
       callData.summary || '',
@@ -417,23 +418,25 @@ function processBatch() {
 
           // 最低限の情報を生成して処理を続行
           extractedInfo = {
-            salesCompany: '不明（抽出エラー）',
-            salesPerson: '不明（抽出エラー）',
-            customerCompany: '不明（抽出エラー）',
-            customerName: '不明（抽出エラー）',
-            callStatus: '不明（抽出エラー）',
-            reasonForRefusal: '',
-            reasonForAppointment: '',
+            sales_company: '不明（抽出エラー）',
+            sales_person: '不明（抽出エラー）',
+            customer_company: '不明（抽出エラー）',
+            customer_name: '不明（抽出エラー）',
+            call_status1: '',
+            call_status2: '',
+            reason_for_refusal: '',
+            reason_for_appointment: '',
             summary: '情報抽出に失敗しました: ' + extractionError.toString()
           };
         }
 
         // 抽出情報のチェック
         Logger.log('情報抽出結果: ' + JSON.stringify({
-          salesCompany: extractedInfo.salesCompany,
-          salesPerson: extractedInfo.salesPerson,
-          customerCompany: extractedInfo.customerCompany,
-          callStatus: extractedInfo.callStatus,
+          sales_company: extractedInfo.sales_company,
+          sales_person: extractedInfo.sales_person,
+          customer_company: extractedInfo.customer_company,
+          call_status1: extractedInfo.call_status1,
+          call_status2: extractedInfo.call_status2,
           summaryLength: extractedInfo.summary ? extractedInfo.summary.length : 0
         }));
 
@@ -461,13 +464,14 @@ function processBatch() {
           callTime: metadata.callTime,
           salesPhoneNumber: metadata.salesPhoneNumber,
           customerPhoneNumber: metadata.customerPhoneNumber,
-          salesCompany: extractedInfo.salesCompany,
-          salesPerson: extractedInfo.salesPerson,
-          customerCompany: extractedInfo.customerCompany,
-          customerName: extractedInfo.customerName,
-          callStatus: extractedInfo.callStatus,
-          reasonForRefusal: extractedInfo.reasonForRefusal,
-          reasonForAppointment: extractedInfo.reasonForAppointment,
+          salesCompany: extractedInfo.sales_company,
+          salesPerson: extractedInfo.sales_person,
+          customerCompany: extractedInfo.customer_company,
+          customerName: extractedInfo.customer_name,
+          callStatus1: extractedInfo.call_status1,
+          callStatus2: extractedInfo.call_status2,
+          reasonForRefusal: extractedInfo.reason_for_refusal,
+          reasonForAppointment: extractedInfo.reason_for_appointment,
           summary: extractedInfo.summary,
           transcription: transcriptionResult.text
         };

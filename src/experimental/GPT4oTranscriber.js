@@ -240,6 +240,11 @@ function transcribeWithGPT4o(file, apiKey) {
     timestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
     timestampsPart += 'segment' + '\r\n';
 
+    // word-levelタイムスタンプも追加（両方指定して確実に取得）
+    let wordTimestampsPart = '--' + boundary + '\r\n';
+    wordTimestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
+    wordTimestampsPart += 'word' + '\r\n';
+
     // 最後の境界を追加
     let endPart = '--' + boundary + '--\r\n';
 
@@ -249,6 +254,7 @@ function transcribeWithGPT4o(file, apiKey) {
     const langPartBytes = Utilities.newBlob(langPart).getBytes();
     const responsePartBytes = Utilities.newBlob(responsePart).getBytes();
     const timestampsPartBytes = Utilities.newBlob(timestampsPart).getBytes();
+    const wordTimestampsPartBytes = Utilities.newBlob(wordTimestampsPart).getBytes();
     const tail = Utilities.newBlob(endPart).getBytes();
 
     // 全てのバイト配列を結合
@@ -259,6 +265,7 @@ function transcribeWithGPT4o(file, apiKey) {
       langPartBytes,
       responsePartBytes,
       timestampsPartBytes,
+      wordTimestampsPartBytes,
       tail
     );
 
@@ -288,21 +295,16 @@ function transcribeWithGPT4o(file, apiKey) {
     // レスポンスをJSONとしてパース
     const responseJson = JSON.parse(response.getContentText());
 
-    // ログに記録（全文出力するように変更）
-    Logger.log('GPT-4o処理完了: 全文出力');
-    Logger.log(responseJson.text);
-
+    // シンプルに文字起こし結果を返す
     return {
       text: responseJson.text,
-      segments: responseJson.segments || [], // セグメント情報が含まれていなくても空配列を返す
       language: responseJson.language,
       duration: responseJson.duration,
       fileName: fileName
     };
-
   } catch (error) {
-    Logger.log('GPT-4o Transcribe処理中にエラー: ' + error.toString());
-    throw new Error('GPT-4o Transcribe処理中にエラー: ' + error.toString());
+    console.error(`GPT-4o-mini Transcribe処理中にエラー: ${error.toString()}`);
+    throw new Error(`GPT-4o-mini Transcribe処理中にエラー: ${error.toString()}`);
   }
 }
 
