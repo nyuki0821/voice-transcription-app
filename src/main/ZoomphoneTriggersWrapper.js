@@ -1,41 +1,8 @@
 /**
- * ZoomPhone 連携用のトリガー設定関数
- * ZoomPhone APIを使って自動的に録音ファイルを取得・処理するためのトリガーを設定
+ * ZoomPhoneトリガーの設定関連機能は src/main/TriggerManager.js に移行されました。
+ * このファイルは既存の依存関係を破壊しないためのラッパーです。
+ * 今後は TriggerManager オブジェクトを使用してください。
  */
-function setupZoomTriggers() {
-  // 既存のZoom関連のトリガーをすべて削除
-  deleteTriggersWithNameContaining('fetchZoomRecordings');
-  deleteTriggersWithNameContaining('checkAndFetchZoomRecordings');
-  deleteTriggersWithNameContaining('purgeOldRecordings');
-  deleteTriggersWithNameContaining('processRecordingsFromSheet');
-
-  // 1. Recordingsシート処理の30分ごとのトリガー
-  ScriptApp.newTrigger('processRecordingsFromSheet')
-    .timeBased()
-    .everyMinutes(30)
-    .create();
-
-  // 2. 朝6:15の夜間バッチ処理 - 毎日実行
-  ScriptApp.newTrigger('fetchZoomRecordingsMorningBatch')
-    .timeBased()
-    .atHour(6)
-    .nearMinute(15)
-    .everyDays(1)
-    .create();
-
-  // 3. リテンションバッチ: 日曜 03:00 に古いファイルを削除
-  ScriptApp.newTrigger('purgeOldRecordings')
-    .timeBased()
-    .onWeekDay(ScriptApp.WeekDay.SUNDAY)
-    .atHour(3)
-    .nearMinute(0)
-    .create();
-
-  return '以下のZoom録音取得トリガーを設定しました：\n' +
-    '1. Recordingsシート処理: 30分ごとに実行\n' +
-    '2. 夜間バッチ: 毎朝6:15\n' +
-    '3. リテンションバッチ: 日曜 03:00 に古いファイルを削除';
-}
 
 /**
  * 夜間バッチ: 前日深夜～当日朝までの録音を取得する関数
@@ -156,76 +123,6 @@ function logAndNotifyError(error, processType) {
 }
 
 /**
- * 指定した関数名を含むトリガーを削除するヘルパー関数
- * @param {string} functionNamePart - 削除対象のトリガーに含まれる関数名の一部
- */
-function deleteTriggersWithNameContaining(functionNamePart) {
-  var triggers = ScriptApp.getProjectTriggers();
-  for (var i = 0; i < triggers.length; i++) {
-    var trigger = triggers[i];
-    var handlerFunction = trigger.getHandlerFunction();
-    if (handlerFunction.indexOf(functionNamePart) !== -1) {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  }
-}
-
-/**
- * Zoom APIトークンを毎日更新するためのトリガーを設定
- */
-function setupDailyZoomApiTokenRefresh() {
-  try {
-    deleteTriggersWithNameContaining('refreshZoomAPIToken');
-
-    // 毎日5:00にトークンを更新
-    ScriptApp.newTrigger('refreshZoomAPIToken')
-      .timeBased()
-      .atHour(5)
-      .nearMinute(0)
-      .everyDays(1)
-      .create();
-
-    return "Zoom APIトークン更新トリガーを設定しました（毎日5:00）";
-  } catch (error) {
-    logAndNotifyError(error, "APIトークン更新トリガー設定");
-    return "エラーが発生しました: " + error.toString();
-  }
-}
-
-/**
- * Recordingsシートの未処理レコードを処理するトリガーを設定する
- * 30分ごとに実行（平日土日祝日問わず、6:00～24:00の間）
- */
-function setupRecordingsSheetTrigger() {
-  try {
-    deleteTriggersWithNameContaining('processRecordingsFromSheet');
-
-    // 平日土日祝日問わず30分ごとに実行するシンプルなトリガー
-    ScriptApp.newTrigger('processRecordingsFromSheet')
-      .timeBased()
-      .everyMinutes(30)
-      .create();
-
-    return "Recordingsシート処理トリガーを設定しました（30分ごと）";
-  } catch (error) {
-    logAndNotifyError(error, "Recordingsシートトリガー設定");
-    return "エラーが発生しました: " + error.toString();
-  }
-}
-
-/**
- * 全てのトリガーをセットアップする
- */
-function setupAllTriggers() {
-  var results = [
-    setupDailyZoomApiTokenRefresh(),
-    setupRecordingsSheetTrigger()
-  ];
-
-  return results.join("\n");
-}
-
-/**
  * 設定を読み込む関数（既存の関数を使用）
  * この関数が存在しない場合は、Main.gsから読み込む
  */
@@ -250,50 +147,126 @@ function loadSettings() {
   };
 }
 
+// 以下のトリガー関連関数は下位互換性のために残しています
+// 今後は TriggerManager オブジェクトの関数を使用してください
+
 /**
- * 直近1時間の録音を取得する便利関数
- * スクリプトエディタから直接実行可能
+ * ZoomPhone 連携用のトリガー設定関数
+ * 互換性のために維持 - TriggerManager.jsの同名関数を使用します
  */
+function setupZoomTriggers() {
+  // TriggerManagerの関数を呼び出す
+  if (typeof TriggerManager !== 'undefined' && typeof TriggerManager.setupZoomTriggers === 'function') {
+    return TriggerManager.setupZoomTriggers();
+  }
+
+  // 下位互換性のために古い実装を残す
+  // この部分は新しいTriggerManager.jsがデプロイされると使用されなくなります
+  return "トリガー管理機能はTriggerManager.jsに移行されました。";
+}
+
+/**
+ * Zoom APIトークンを毎日更新するためのトリガーを設定
+ * 互換性のために維持 - TriggerManager.jsの同名関数を使用します
+ */
+function setupDailyZoomApiTokenRefresh() {
+  // TriggerManagerの関数を呼び出す
+  if (typeof TriggerManager !== 'undefined' && typeof TriggerManager.setupDailyZoomApiTokenRefresh === 'function') {
+    return TriggerManager.setupDailyZoomApiTokenRefresh();
+  }
+
+  // 下位互換性のため
+  return "トリガー管理機能はTriggerManager.jsに移行されました。";
+}
+
+/**
+ * Recordingsシートの未処理レコードを処理するトリガーを設定する
+ * 互換性のために維持 - TriggerManager.jsの同名関数を使用します
+ */
+function setupRecordingsSheetTrigger() {
+  // TriggerManagerの関数を呼び出す
+  if (typeof TriggerManager !== 'undefined' && typeof TriggerManager.setupRecordingsSheetTrigger === 'function') {
+    return TriggerManager.setupRecordingsSheetTrigger();
+  }
+
+  // 下位互換性のため
+  return "トリガー管理機能はTriggerManager.jsに移行されました。";
+}
+
+/**
+ * 全てのトリガーをセットアップする
+ * 互換性のために維持 - TriggerManager.jsの同名関数を使用します
+ */
+function setupAllTriggers() {
+  // TriggerManagerの関数を呼び出す
+  if (typeof TriggerManager !== 'undefined' && typeof TriggerManager.setupAllTriggers === 'function') {
+    return TriggerManager.setupAllTriggers();
+  }
+
+  // 下位互換性のため
+  return "トリガー管理機能はTriggerManager.jsに移行されました。";
+}
+
+/**
+ * 指定した関数名を含むトリガーを削除するヘルパー関数
+ * 互換性のために維持 - TriggerManager.jsの同名関数を使用します
+ */
+function deleteTriggersWithNameContaining(functionNamePart) {
+  // TriggerManagerの関数を呼び出す
+  if (typeof TriggerManager !== 'undefined' && typeof TriggerManager.deleteTriggersWithNameContaining === 'function') {
+    return TriggerManager.deleteTriggersWithNameContaining(functionNamePart);
+  }
+
+  // 下位互換性のために古い実装を呼び出す場合の処理
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    var trigger = triggers[i];
+    var handlerFunction = trigger.getHandlerFunction();
+    if (handlerFunction.indexOf(functionNamePart) !== -1) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  }
+}
+
+/**
+ * 全てのトリガーを削除する
+ * 互換性のために維持 - TriggerManager.jsの同名関数を使用します
+ */
+function deleteAllTriggers() {
+  // TriggerManagerの関数を呼び出す
+  if (typeof TriggerManager !== 'undefined' && typeof TriggerManager.deleteAllTriggers === 'function') {
+    return TriggerManager.deleteAllTriggers();
+  }
+
+  // 下位互換性のために古い実装を呼び出す場合の処理
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    ScriptApp.deleteTrigger(triggers[i]);
+  }
+  return "すべてのトリガーを削除しました。";
+}
+
+// 互換性のために以下の関数を残す（実装はそのまま）
 function fetchLastHourRecordings() {
-  return fetchZoomRecordingsManually(1); // 直近1時間の録音を取得
+  return fetchZoomRecordingsManually(1);
 }
 
-/**
- * 直近2時間の録音を取得する便利関数
- * スクリプトエディタから直接実行可能
- */
 function fetchLast2HoursRecordings() {
-  return fetchZoomRecordingsManually(2); // 直近2時間の録音を取得
+  return fetchZoomRecordingsManually(2);
 }
 
-/**
- * 直近6時間の録音を取得する便利関数
- * スクリプトエディタから直接実行可能
- */
 function fetchLast6HoursRecordings() {
-  return fetchZoomRecordingsManually(6); // 直近6時間の録音を取得
+  return fetchZoomRecordingsManually(6);
 }
 
-/**
- * 直近24時間（1日）の録音を取得する便利関数
- * スクリプトエディタから直接実行可能
- */
 function fetchLast24HoursRecordings() {
-  return fetchZoomRecordingsManually(24); // 直近24時間の録音を取得
+  return fetchZoomRecordingsManually(24);
 }
 
-/**
- * 直近48時間（2日）の録音を取得する便利関数
- * スクリプトエディタから直接実行可能
- */
 function fetchLast48HoursRecordings() {
-  return fetchZoomRecordingsManually(48); // 直近48時間の録音を取得
+  return fetchZoomRecordingsManually(48);
 }
 
-/**
- * すべての未処理録音を取得する便利関数
- * スクリプトエディタから直接実行可能
- */
 function fetchAllPendingRecordings() {
-  return fetchZoomRecordingsManually(); // すべての未処理録音を取得
-}
+  return fetchZoomRecordingsManually();
+} 

@@ -151,3 +151,47 @@ var ZoomAPIManager = (function () {
     loadSettings: loadSettings
   };
 })();
+
+/**
+ * Zoom APIのアクセストークンを更新する関数
+ * 毎日5:00にトリガーによって実行され、新しいトークンを取得する
+ * @return {string} 実行結果メッセージ
+ */
+function refreshZoomAPIToken() {
+  try {
+    Logger.log('Zoom APIトークンの更新を開始します...');
+
+    // ZoomAPIManagerのgetAccessToken()を呼び出してトークンを強制的に再取得
+    var token = ZoomAPIManager.getAccessToken();
+
+    if (token) {
+      Logger.log('Zoom APIトークンの更新に成功しました');
+      return 'Zoom APIトークンの更新に成功しました';
+    } else {
+      throw new Error('トークンの取得に失敗しました');
+    }
+  } catch (error) {
+    var errorMsg = error.toString();
+    Logger.log('Zoom APIトークン更新中にエラー: ' + errorMsg);
+
+    // エラー通知（もし設定されていれば）
+    try {
+      var settings = EnvironmentConfig.getConfig();
+      if (settings.ADMIN_EMAILS && settings.ADMIN_EMAILS.length > 0) {
+        var subject = "Zoom APIトークン更新エラー";
+        var body = "Zoom APIトークンの更新中にエラーが発生しました。\n\n" +
+          "日時: " + new Date().toLocaleString() + "\n" +
+          "エラー: " + errorMsg + "\n\n" +
+          "システム管理者に連絡してください。";
+
+        for (var i = 0; i < settings.ADMIN_EMAILS.length; i++) {
+          GmailApp.sendEmail(settings.ADMIN_EMAILS[i], subject, body);
+        }
+      }
+    } catch (notifyError) {
+      Logger.log('エラー通知の送信中にエラー: ' + notifyError.toString());
+    }
+
+    return 'Zoom APIトークン更新中にエラー: ' + errorMsg;
+  }
+}

@@ -1,6 +1,18 @@
 /**
  * メインコントローラー（OpenAI API対応版）
  * バッチ処理のエントリーポイント
+ *
+ * 依存モジュール:
+ * - EnvironmentConfig (src/config/EnvironmentConfig.js)
+ * - TriggerManager (src/main/TriggerManager.js)
+ * - ZoomphoneProcessor (src/zoom/ZoomphoneProcessor.js)
+ * - NotificationService (src/core/NotificationService.js)
+ * - ZoomphoneTriggersWrapper (src/main/ZoomphoneTriggersWrapper.js) - 下位互換性のため
+ */
+
+/**
+ * メインコントローラー（OpenAI API対応版）
+ * バッチ処理のエントリーポイント
  */
 
 // グローバル変数
@@ -257,8 +269,8 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       Logger.log('シートが存在しないため新規作成します: ' + sheetName);
       sheet = spreadsheet.insertSheet(sheetName);
       // ヘッダー行を設定
-      sheet.getRange(1, 1, 1, 14).setValues([
-        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'sales_person', 'customer_phone_number', 'customer_company', 'customer_name', 'call_status', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
+      sheet.getRange(1, 1, 1, 15).setValues([
+        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'sales_person', 'customer_phone_number', 'customer_company', 'customer_name', 'call_status1', 'call_status2', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
       ]);
     }
 
@@ -278,7 +290,8 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       callData.customerPhoneNumber || '',
       callData.customerCompany || '',
       callData.customerName || '',
-      callData.callStatus || '',
+      callData.callStatus1 || '',
+      callData.callStatus2 || '',
       callData.reasonForRefusal || '',
       callData.reasonForAppointment || '',
       callData.summary || '',
@@ -362,11 +375,26 @@ function processBatch() {
         var logId = 'log_' + new Date().getTime() + '_' + i;
 
         // 文字起こし処理
-        var transcriptionResult = TranscriptionService.transcribe(
-          file,
-          localSettings.ASSEMBLYAI_API_KEY,
-          localSettings.OPENAI_API_KEY
-        );
+        var transcriptionResult;
+        try {
+          transcriptionResult = TranscriptionService.transcribe(
+            file,
+            localSettings.ASSEMBLYAI_API_KEY,
+            localSettings.OPENAI_API_KEY
+          );
+        } catch (transcriptionError) {
+          Logger.log('文字起こし処理でエラーが発生: ' + transcriptionError.toString());
+
+          // 最低限の結果を生成して処理を続行
+          transcriptionResult = {
+            text: '【文字起こし失敗: ' + transcriptionError.toString() + '】',
+            rawText: '',
+            utterances: [],
+            speakerInfo: {},
+            speakerRoles: {},
+            fileName: file.getName()
+          };
+        }
 
         // 文字起こし結果のチェック
         Logger.log('文字起こし結果: 文字数=' + (transcriptionResult.text ? transcriptionResult.text.length : 0));
@@ -379,18 +407,36 @@ function processBatch() {
           throw new Error('OpenAI APIキーが設定されていないため、処理を続行できません');
         }
 
-        extractedInfo = InformationExtractor.extract(
-          transcriptionResult.text,
-          transcriptionResult.utterances,
-          localSettings.OPENAI_API_KEY
-        );
+        try {
+          extractedInfo = InformationExtractor.extract(
+            transcriptionResult.text,
+            transcriptionResult.utterances,
+            localSettings.OPENAI_API_KEY
+          );
+        } catch (extractionError) {
+          Logger.log('情報抽出処理でエラーが発生: ' + extractionError.toString());
+
+          // 最低限の情報を生成して処理を続行
+          extractedInfo = {
+            sales_company: '不明（抽出エラー）',
+            sales_person: '不明（抽出エラー）',
+            customer_company: '不明（抽出エラー）',
+            customer_name: '不明（抽出エラー）',
+            call_status1: '',
+            call_status2: '',
+            reason_for_refusal: '',
+            reason_for_appointment: '',
+            summary: '情報抽出に失敗しました: ' + extractionError.toString()
+          };
+        }
 
         // 抽出情報のチェック
         Logger.log('情報抽出結果: ' + JSON.stringify({
-          salesCompany: extractedInfo.salesCompany,
-          salesPerson: extractedInfo.salesPerson,
-          customerCompany: extractedInfo.customerCompany,
-          callStatus: extractedInfo.callStatus,
+          sales_company: extractedInfo.sales_company,
+          sales_person: extractedInfo.sales_person,
+          customer_company: extractedInfo.customer_company,
+          call_status1: extractedInfo.call_status1,
+          call_status2: extractedInfo.call_status2,
           summaryLength: extractedInfo.summary ? extractedInfo.summary.length : 0
         }));
 
@@ -418,13 +464,14 @@ function processBatch() {
           callTime: metadata.callTime,
           salesPhoneNumber: metadata.salesPhoneNumber,
           customerPhoneNumber: metadata.customerPhoneNumber,
-          salesCompany: extractedInfo.salesCompany,
-          salesPerson: extractedInfo.salesPerson,
-          customerCompany: extractedInfo.customerCompany,
-          customerName: extractedInfo.customerName,
-          callStatus: extractedInfo.callStatus,
-          reasonForRefusal: extractedInfo.reasonForRefusal,
-          reasonForAppointment: extractedInfo.reasonForAppointment,
+          salesCompany: extractedInfo.sales_company,
+          salesPerson: extractedInfo.sales_person,
+          customerCompany: extractedInfo.customer_company,
+          customerName: extractedInfo.customer_name,
+          callStatus1: extractedInfo.call_status1,
+          callStatus2: extractedInfo.call_status2,
+          reasonForRefusal: extractedInfo.reason_for_refusal,
+          reasonForAppointment: extractedInfo.reason_for_appointment,
           summary: extractedInfo.summary,
           transcription: transcriptionResult.text
         };
@@ -509,6 +556,119 @@ function processBatch() {
 }
 
 /**
+ * 処理中フォルダにある未完了ファイルを未処理フォルダに戻す
+ * AppScriptの制限により中断されたファイルを復旧する
+ */
+function recoverInterruptedFiles() {
+  var startTime = new Date();
+  Logger.log('中断ファイル復旧処理開始: ' + startTime);
+
+  try {
+    // 設定を取得
+    var localSettings = getSystemSettings();
+
+    if (!localSettings.PROCESSING_FOLDER_ID) {
+      throw new Error('処理中フォルダIDが設定されていません');
+    }
+
+    if (!localSettings.SOURCE_FOLDER_ID) {
+      throw new Error('処理対象フォルダIDが設定されていません');
+    }
+
+    // 処理中フォルダのファイルを取得
+    var processingFolder = DriveApp.getFolderById(localSettings.PROCESSING_FOLDER_ID);
+    var files = processingFolder.getFiles();
+    var interruptedFiles = [];
+
+    while (files.hasNext()) {
+      var file = files.next();
+      var mimeType = file.getMimeType() || "";
+
+      // 音声ファイルのみを対象とする
+      if (mimeType.indexOf('audio/') === 0 ||
+        mimeType === 'application/octet-stream' ||
+        file.getName().toLowerCase().indexOf('.mp3') !== -1) {
+        interruptedFiles.push(file);
+      }
+    }
+
+    Logger.log('中断された可能性のあるファイル数: ' + interruptedFiles.length);
+
+    if (interruptedFiles.length === 0) {
+      return '中断されたファイルはありませんでした。';
+    }
+
+    // 復旧結果のトラッキング
+    var results = {
+      total: interruptedFiles.length,
+      recovered: 0,
+      failed: 0,
+      details: []
+    };
+
+    // ファイルを復旧
+    for (var i = 0; i < interruptedFiles.length; i++) {
+      var file = interruptedFiles[i];
+
+      try {
+        Logger.log('ファイル復旧処理: ' + file.getName());
+
+        // ファイルからメタデータを取得
+        var metadata = extractMetadataFromFile(file.getName());
+
+        if (metadata && metadata.recordId) {
+          // Recordingsシートの文字起こし状態を更新 (INTERRUPTED)
+          updateTranscriptionStatusByRecordId(
+            metadata.recordId,
+            'INTERRUPTED',
+            '',
+            Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
+          );
+        }
+
+        // ファイルを未処理フォルダに移動
+        FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
+
+        // 結果を記録
+        results.recovered++;
+        results.details.push({
+          fileName: file.getName(),
+          status: 'recovered',
+          message: '未処理フォルダに復旧しました'
+        });
+      } catch (error) {
+        Logger.log('ファイル復旧エラー: ' + error.toString());
+
+        results.failed++;
+        results.details.push({
+          fileName: file.getName(),
+          status: 'error',
+          message: error.toString()
+        });
+      }
+    }
+
+    // 処理結果のログ出力
+    var endTime = new Date();
+    var processingTime = (endTime - startTime) / 1000; // 秒単位
+
+    var summary = '中断ファイル復旧処理完了: ' +
+      '対象=' + results.total + '件, ' +
+      '復旧=' + results.recovered + '件, ' +
+      '失敗=' + results.failed + '件, ' +
+      '処理時間=' + processingTime + '秒';
+
+    Logger.log(summary);
+    return summary;
+
+  } catch (error) {
+    var errorMessage = '中断ファイル復旧処理でエラーが発生: ' + error.toString();
+    Logger.log(errorMessage);
+    return errorMessage;
+  }
+}
+
+/**
  * 録音IDに一致するRecordingsシートの行を検索し、文字起こし状態を更新する
  * @param {string} recordId - 録音ID
  * @param {string} status - 更新するステータス
@@ -554,41 +714,6 @@ function updateTranscriptionStatusByRecordId(recordId, status, processStart, pro
   } catch (e) {
     Logger.log('文字起こし状態の更新でエラー: ' + e.toString());
   }
-}
-
-/**
- * 文字起こし処理用のトリガーを設定する関数
- */
-function setupTranscriptionTriggers() {
-  // 既存のトリガーをすべて削除
-  var triggers = ScriptApp.getProjectTriggers();
-  for (var i = 0; i < triggers.length; i++) {
-    var trigger = triggers[i];
-    var handlerFunction = trigger.getHandlerFunction();
-    // 自分が管理するトリガーのみ削除
-    if (handlerFunction === 'startDailyProcess' ||
-      handlerFunction === 'processBatchOnSchedule') {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  }
-
-  // 6時にプロセスを開始するトリガー
-  ScriptApp.newTrigger('startDailyProcess')
-    .timeBased()
-    .atHour(6)
-    .nearMinute(0)
-    .everyDays(1)
-    .create();
-
-  // 10分ごとの処理実行トリガー
-  ScriptApp.newTrigger('processBatchOnSchedule')
-    .timeBased()
-    .everyMinutes(10)
-    .create();
-
-  return '文字起こし処理用トリガーを設定しました：\n' +
-    '1. 6時開始トリガー\n' +
-    '2. 10分ごとの処理トリガー（6:00～24:00の間のみ）';
 }
 
 /**
@@ -697,6 +822,43 @@ function manualSendDailySummary(dateStr) {
     }
   } catch (error) {
     Logger.log('手動サマリー送信中にエラー: ' + error.toString());
+    return 'エラーが発生しました: ' + error.toString();
+  }
+}
+
+/**
+ * 日次処理結果サマリーを自動で送信する関数（19:00トリガー用）
+ * トリガーによって毎日19:00に自動実行される
+ * @return {string} 実行結果メッセージ
+ */
+function sendDailySummary() {
+  try {
+    // 今日の日付を取得
+    var today = new Date();
+    var dateStr = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy/MM/dd');
+
+    Logger.log('本日(' + dateStr + ')の処理サマリーを自動送信します');
+
+    // Recordingsシートから本日のデータを集計
+    var summary = calculateSummaryFromSheet(dateStr);
+
+    // 管理者メールアドレスを取得
+    var settings = getSystemSettings();
+    if (settings && settings.ADMIN_EMAILS && settings.ADMIN_EMAILS.length > 0) {
+      // 各管理者にサマリーメールを送信
+      for (var i = 0; i < settings.ADMIN_EMAILS.length; i++) {
+        NotificationService.sendDailyProcessingSummary(
+          settings.ADMIN_EMAILS[i],
+          summary,
+          dateStr
+        );
+      }
+      return dateStr + ' の日次処理サマリーを ' + settings.ADMIN_EMAILS.length + '名の管理者に自動送信しました。';
+    } else {
+      throw new Error('送信先のメールアドレスが設定されていません。');
+    }
+  } catch (error) {
+    Logger.log('自動サマリー送信中にエラー: ' + error.toString());
     return 'エラーが発生しました: ' + error.toString();
   }
 }
