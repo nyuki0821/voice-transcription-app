@@ -269,8 +269,8 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       Logger.log('シートが存在しないため新規作成します: ' + sheetName);
       sheet = spreadsheet.insertSheet(sheetName);
       // ヘッダー行を設定
-      sheet.getRange(1, 1, 1, 15).setValues([
-        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'sales_person', 'customer_phone_number', 'customer_company', 'customer_name', 'call_status1', 'call_status2', 'reason_for_refusal', 'reason_for_appointment', 'summary', 'full_transcript']
+      sheet.getRange(1, 1, 1, 17).setValues([
+        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'sales_person', 'customer_phone_number', 'customer_company', 'customer_name', 'call_status1', 'call_status2', 'reason_for_refusal', 'reason_for_refusal_category', 'reason_for_appointment', 'reason_for_appointment_category', 'summary', 'full_transcript']
       ]);
     }
 
@@ -293,7 +293,9 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       callData.callStatus1 || '',
       callData.callStatus2 || '',
       callData.reasonForRefusal || '',
+      callData.reasonForRefusalCategory || '',
       callData.reasonForAppointment || '',
+      callData.reasonForAppointmentCategory || '',
       callData.summary || '',
       callData.transcription || ''
     ];
@@ -471,7 +473,9 @@ function processBatch() {
           callStatus1: extractedInfo.call_status1,
           callStatus2: extractedInfo.call_status2,
           reasonForRefusal: extractedInfo.reason_for_refusal,
+          reasonForRefusalCategory: extractedInfo.reason_for_refusal_category,
           reasonForAppointment: extractedInfo.reason_for_appointment,
+          reasonForAppointmentCategory: extractedInfo.reason_for_appointment_category,
           summary: extractedInfo.summary,
           transcription: transcriptionResult.text
         };
@@ -947,4 +951,22 @@ function calculateSummaryFromSheet(dateStr) {
     Logger.log('サマリー集計でエラー: ' + e.toString());
     return { success: 0, error: 0, details: [] };
   }
+}
+
+/**
+ * スプレッドシートが開かれたときに実行される関数
+ * カスタムメニューを追加する
+ */
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+
+  ui.createMenu('文字起こしシステム')
+    .addItem('今すぐバッチ処理実行', 'processBatch')
+    .addItem('直近1時間の録音を取得', 'TriggerManager.fetchLastHourRecordings')
+    .addItem('直近2時間の録音を取得', 'TriggerManager.fetchLast2HoursRecordings')
+    .addItem('直近6時間の録音を取得', 'TriggerManager.fetchLast6HoursRecordings')
+    .addItem('直近24時間の録音を取得', 'TriggerManager.fetchLast24HoursRecordings')
+    .addItem('直近48時間の録音を取得', 'TriggerManager.fetchLast48HoursRecordings')
+    .addItem('すべての未処理録音を取得', 'TriggerManager.fetchAllPendingRecordings')
+    .addToUi();
 }

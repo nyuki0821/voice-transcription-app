@@ -36,7 +36,9 @@ var InformationExtractor = (function () {
           call_status1: "非コンタクト", // 短すぎる会話は非コンタクトに変更
           call_status2: "",
           reason_for_refusal: "",
+          reason_for_refusal_category: "",
           reason_for_appointment: "",
+          reason_for_appointment_category: "",
           summary: text // 元のテキストをそのまま返す
         };
       }
@@ -59,7 +61,9 @@ var InformationExtractor = (function () {
             call_status1: "非コンタクト",
             call_status2: "",
             reason_for_refusal: "",
+            reason_for_refusal_category: "",
             reason_for_appointment: "",
+            reason_for_appointment_category: "",
             summary: "会話が短いまたは中断されているため詳細な説明ができていません。"
           };
         }
@@ -76,16 +80,30 @@ var InformationExtractor = (function () {
         "3. 会社名や担当者名が明示的に述べられている部分を特定する\n" +
         "4. 会話の結論を以下の2つの観点で判断する：\n" +
         "   - まず、担当者と製品・サービスの説明ができたか（コンタクト）\n" +
-        "   - 次に、コンタクトした場合の会話結果（アポイント、断り、継続）\n" +
+        "   - 次に、コンタクトした場合の会話結果（アポイント/断り/継続）\n" +
         "5. 会話の主要なポイントを要約する\n\n" +
         "【行動ステップ】\n" +
         "1. 特定した情報をJSONフィールドに適切に割り当てる\n" +
         "2. 確証がない情報は空欄にする（推測しない）\n" +
         "3. call_status1とcall_status2は必ず定義に従って適切な値を選択する\n" +
-        "4. 思考プロセスは含めず、JSONオブジェクトのみを出力する\n\n" +
+        "4. 断り理由やアポイント理由については、その内容と適切なカテゴリを選定する\n" +
+        "5. 思考プロセスは含めず、JSONオブジェクトのみを出力する\n\n" +
         "【JSON形式】\n" +
         "{\"sales_company\":\"\", \"sales_person\":\"\", \"customer_company\":\"\", \"customer_name\":\"\", " +
-        "\"call_status1\":\"\", \"call_status2\":\"\", \"reason_for_refusal\":\"\", \"reason_for_appointment\":\"\", \"summary\":\"\"}\n\n" +
+        "\"call_status1\":\"\", \"call_status2\":\"\", \"reason_for_refusal\":\"\", \"reason_for_refusal_category\":\"\", " +
+        "\"reason_for_appointment\":\"\", \"reason_for_appointment_category\":\"\", \"summary\":\"\"}\n\n" +
+        "【sales_companyの候補リスト】\n" +
+        "営業会社名は以下のリストから最も適切なものを選んでください。会話中に名前が明示的に出ていない場合は空欄にしてください：\n" +
+        "・株式会社ENERALL\n" +
+        "・エムスリーヘルスデザイン株式会社\n" +
+        "・株式会社TOKIUM\n" +
+        "・株式会社グッドワークス\n" +
+        "・テコム看護\n" +
+        "・ハローワールド株式会社\n" +
+        "・株式会社ワーサル\n" +
+        "・株式会社NOTCH\n" +
+        "・株式会社ジースタイラス\n" +
+        "・株式会社佑人社\n\n" +
         "【call_statusの定義】\n" +
         "・call_status1：\n" +
         "  ・コンタクト: 担当者に関わらず、製品・サービスの詳細な説明ができた場合。単に「ご案内」と言っただけでは不十分で、製品・サービスの具体的な内容や特徴について説明できた場合のみ。\n" +
@@ -95,9 +113,28 @@ var InformationExtractor = (function () {
         "  ・断り: 明確に興味がない、必要ないと断られた場合\n" +
         "  ・継続: 検討する、持ち帰る等で終話した場合\n" +
         "・不明: 文章が短すぎる等で判断できない場合は不明と入力\n\n" +
+        "【reason_for_refusal_categoryの定義】\n" +
+        "断りの理由を以下のカテゴリから選択する（断りの場合のみ入力）：\n" +
+        "・忙しい\n" +
+        "・断るよう言われている\n" +
+        "・必要性を感じない・興味を感じない・予定がない\n" +
+        "・導入済みで切替予定なし\n" +
+        "・別会社・サービスで検討を進めている\n" +
+        "・価格が高い\n" +
+        "・その他\n\n" +
+        "【reason_for_appointment_categoryの定義】\n" +
+        "アポイントの理由を以下のカテゴリから選択する（アポイントの場合のみ入力）：\n" +
+        "・必要性を感じていた\n" +
+        "・価格に魅力を感じる\n" +
+        "・サービスに興味がある\n" +
+        "・とりあえず話を聞いてみる\n" +
+        "・その他\n\n" +
         "【重要なルール】\n" +
+        "・営業会社名（sales_company）は指定リストからのみ選択し、会話に明示的に出ていない場合は空欄\n" +
         "・reason_for_refusalは断りの場合のみ入力\n" +
+        "・reason_for_refusal_categoryは断りの場合のみ入力\n" +
         "・reason_for_appointmentはアポイントの場合のみ入力\n" +
+        "・reason_for_appointment_categoryはアポイントの場合のみ入力\n" +
         "・確実な情報のみを抽出し、不明な場合は空欄にする\n" +
         "・思考プロセスは出力に含めず、JSONオブジェクトのみを返すこと";
 
@@ -107,7 +144,7 @@ var InformationExtractor = (function () {
         "2. 次に会話の結果を2段階で判定してください：\n" +
         "   a) call_status1: 担当者と製品・サービスの説明ができたか（コンタクト/非コンタクト）\n" +
         "   b) call_status2: コンタクトの場合の成果（アポイント/断り/継続）\n" +
-        "3. 断りの場合はその理由、アポイントの場合はその詳細を特定してください\n" +
+        "3. 断りの場合はその理由とカテゴリ、アポイントの場合はその理由とカテゴリを特定してください\n" +
         "4. 最後に会話の要点を簡潔にまとめてください\n\n" +
         "会話内容：\n\n" + text;
 
@@ -169,33 +206,39 @@ var InformationExtractor = (function () {
           call_status1: "不明",
           call_status2: "",
           reason_for_refusal: "",
+          reason_for_refusal_category: "",
           reason_for_appointment: "",
+          reason_for_appointment_category: "",
           summary: "JSONの解析に失敗しました。"
         };
       }
 
       // 抽出されたデータの検証とデフォルト値の設定
       var validatedInfo = {
-        sales_company: extractedInfo.sales_company || "",
+        sales_company: validateSalesCompany(extractedInfo.sales_company) || "",
         sales_person: extractedInfo.sales_person || "",
         customer_company: extractedInfo.customer_company || "",
         customer_name: extractedInfo.customer_name || "",
         call_status1: validateCallStatus1(extractedInfo.call_status1) || "不明",
         call_status2: validateCallStatus2(extractedInfo.call_status2, extractedInfo.call_status1) || "",
         reason_for_refusal: extractedInfo.reason_for_refusal || "",
+        reason_for_refusal_category: validateRefusalCategory(extractedInfo.reason_for_refusal_category) || "",
         reason_for_appointment: extractedInfo.reason_for_appointment || "",
+        reason_for_appointment_category: validateAppointmentCategory(extractedInfo.reason_for_appointment_category) || "",
         summary: extractedInfo.summary || text
       };
 
       // コールステータスに基づいた追加検証
-      // 断り以外の場合はreason_for_refusalを空にする
+      // 断り以外の場合はreason_for_refusalとそのカテゴリを空にする
       if (validatedInfo.call_status2 !== "断り") {
         validatedInfo.reason_for_refusal = "";
+        validatedInfo.reason_for_refusal_category = "";
       }
 
-      // アポイント以外の場合はreason_for_appointmentを空にする
+      // アポイント以外の場合はreason_for_appointmentとそのカテゴリを空にする
       if (validatedInfo.call_status2 !== "アポイント") {
         validatedInfo.reason_for_appointment = "";
+        validatedInfo.reason_for_appointment_category = "";
       }
 
       // 非コンタクトの場合はcall_status2を空にする
@@ -308,6 +351,88 @@ var InformationExtractor = (function () {
 
     // デフォルトでは継続として扱う
     return "継続";
+  }
+
+  /**
+   * reason_for_refusal_categoryの値を検証する
+   * @param {string} category - 抽出された断り理由カテゴリ
+   * @return {string} - 検証済みのカテゴリ
+   */
+  function validateRefusalCategory(category) {
+    if (!category) return "";
+
+    var normalizedCategory = String(category).trim();
+
+    // 許可されたカテゴリ値
+    var allowedCategories = [
+      "忙しい",
+      "断るよう言われている",
+      "必要性を感じない・興味を感じない・予定がない",
+      "導入済みで切替予定なし",
+      "別会社・サービスで検討を進めている",
+      "価格が高い",
+      "その他"
+    ];
+
+    if (allowedCategories.indexOf(normalizedCategory) !== -1) {
+      return normalizedCategory;
+    }
+
+    // 類似のカテゴリを標準化
+    if (/忙しい|時間がない|多忙|スケジュール/.test(normalizedCategory)) {
+      return "忙しい";
+    } else if (/上司|上長|上の人|権限がない|指示|言われ/.test(normalizedCategory)) {
+      return "断るよう言われている";
+    } else if (/必要性|興味|ニーズ|予定|検討予定|予算|計画/.test(normalizedCategory)) {
+      return "必要性を感じない・興味を感じない・予定がない";
+    } else if (/導入済み|使っ|既に|十分|満足|切り替え/.test(normalizedCategory)) {
+      return "導入済みで切替予定なし";
+    } else if (/別|他社|競合|他のベンダー|すでに/.test(normalizedCategory)) {
+      return "別会社・サービスで検討を進めている";
+    } else if (/価格|コスト|高い|予算/.test(normalizedCategory)) {
+      return "価格が高い";
+    }
+
+    // デフォルトではその他として扱う
+    return "その他";
+  }
+
+  /**
+   * reason_for_appointment_categoryの値を検証する
+   * @param {string} category - 抽出されたアポイント理由カテゴリ
+   * @return {string} - 検証済みのカテゴリ
+   */
+  function validateAppointmentCategory(category) {
+    if (!category) return "";
+
+    var normalizedCategory = String(category).trim();
+
+    // 許可されたカテゴリ値
+    var allowedCategories = [
+      "必要性を感じていた",
+      "価格に魅力を感じる",
+      "サービスに興味がある",
+      "とりあえず話を聞いてみる",
+      "その他"
+    ];
+
+    if (allowedCategories.indexOf(normalizedCategory) !== -1) {
+      return normalizedCategory;
+    }
+
+    // 類似のカテゴリを標準化
+    if (/必要|課題|問題|解決|ニーズ/.test(normalizedCategory)) {
+      return "必要性を感じていた";
+    } else if (/価格|コスト|費用|安い|予算|節約/.test(normalizedCategory)) {
+      return "価格に魅力を感じる";
+    } else if (/興味|機能|特徴|メリット|魅力|ベネフィット/.test(normalizedCategory)) {
+      return "サービスに興味がある";
+    } else if (/とりあえず|話を聞く|情報収集|比較|検討|時間/.test(normalizedCategory)) {
+      return "とりあえず話を聞いてみる";
+    }
+
+    // デフォルトではその他として扱う
+    return "その他";
   }
 
   /**
@@ -644,7 +769,9 @@ var InformationExtractor = (function () {
       call_status1: info.call_status1,
       call_status2: info.call_status2,
       reason_for_refusal: cleanText(info.reason_for_refusal),
+      reason_for_refusal_category: info.reason_for_refusal_category,
       reason_for_appointment: cleanText(info.reason_for_appointment),
+      reason_for_appointment_category: info.reason_for_appointment_category,
       summary: cleanText(info.summary)
     };
 
@@ -674,6 +801,65 @@ var InformationExtractor = (function () {
     cleaned = cleaned.replace(/([一-龯ぁ-ゔァ-ヴー])\s+([一-龯ぁ-ゔァ-ヴー])/g, "$1$2");
 
     return cleaned;
+  }
+
+  /**
+   * sales_companyの値を検証する
+   * @param {string} company - 抽出された会社名
+   * @return {string} - 検証済みの会社名
+   */
+  function validateSalesCompany(company) {
+    if (!company) return "";
+
+    var normalizedCompany = String(company).trim();
+
+    // 許可されたsales_companyのリスト
+    var allowedCompanies = [
+      "株式会社ENERALL",
+      "エムスリーヘルスデザイン株式会社",
+      "株式会社TOKIUM",
+      "株式会社グッドワークス",
+      "テコム看護",
+      "ハローワールド株式会社",
+      "株式会社ワーサル",
+      "株式会社NOTCH",
+      "株式会社ジースタイラス",
+      "株式会社佑人社"
+    ];
+
+    // 完全一致をチェック
+    if (allowedCompanies.indexOf(normalizedCompany) !== -1) {
+      return normalizedCompany;
+    }
+
+    // 部分一致の会社名を確認
+    for (var i = 0; i < allowedCompanies.length; i++) {
+      // 会社名の特徴的な部分を抽出（例：「株式会社」を除いた部分）
+      var companyKey = allowedCompanies[i].replace(/株式会社|エムスリーヘルスデザイン|テコム看護|ハローワールド/g, "").trim();
+
+      // 特徴的な部分が含まれているかをチェック
+      if (companyKey && normalizedCompany.indexOf(companyKey) !== -1) {
+        return allowedCompanies[i];
+      }
+
+      // 「株式会社」の位置が異なる場合も確認
+      if (allowedCompanies[i].indexOf("株式会社") === 0) {
+        // 「株式会社XXX」の場合「XXX株式会社」でも一致
+        var companyNameOnly = allowedCompanies[i].replace("株式会社", "").trim();
+        if (normalizedCompany === companyNameOnly + "株式会社") {
+          return allowedCompanies[i];
+        }
+      } else if (allowedCompanies[i].indexOf("株式会社") > 0) {
+        // 「XXX株式会社」の場合「株式会社XXX」でも一致
+        var companyNameOnly = allowedCompanies[i].replace("株式会社", "").trim();
+        if (normalizedCompany === "株式会社" + companyNameOnly) {
+          return allowedCompanies[i];
+        }
+      }
+    }
+
+    // どれにも一致しない場合は空文字を返す
+    return "";
   }
 
   // 公開メソッド
