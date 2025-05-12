@@ -727,6 +727,11 @@ function processBatchOnSchedule() {
       return 'バッチ処理が無効化されています';
     }
 
+    // 中断ファイル復旧処理を実行
+    Logger.log('スケジュール実行: 中断ファイルの復旧処理を開始します...');
+    var recoveryResult = recoverInterruptedFiles();
+    Logger.log('スケジュール実行: 中断ファイル復旧結果: ' + recoveryResult);
+
     // 処理を実行
     return processBatch();
   } else {
@@ -758,6 +763,11 @@ function startDailyProcess() {
 function main() {
   try {
     Logger.log('メイン処理スタート: ' + new Date().toString());
+
+    // 0. 中断されたファイルの復旧処理
+    Logger.log('中断されたファイルの復旧処理を開始します...');
+    var recoveryResult = recoverInterruptedFiles();
+    Logger.log('中断ファイル復旧結果: ' + recoveryResult);
 
     // 1. Zoom録音ファイルの取得処理
     Logger.log('Recordingsシートからの録音ファイル取得処理を開始します（タイムスタンプが古い順に処理）...');
