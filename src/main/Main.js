@@ -268,9 +268,9 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       // シートが存在しない場合は作成
       Logger.log('シートが存在しないため新規作成します: ' + sheetName);
       sheet = spreadsheet.insertSheet(sheetName);
-      // ヘッダー行を設定
-      sheet.getRange(1, 1, 1, 17).setValues([
-        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'sales_person', 'customer_phone_number', 'customer_company', 'customer_name', 'call_status1', 'call_status2', 'reason_for_refusal', 'reason_for_refusal_category', 'reason_for_appointment', 'reason_for_appointment_category', 'summary', 'full_transcript']
+      // ヘッダー行を設定（sales_personとcustomer_companyを削除）
+      sheet.getRange(1, 1, 1, 15).setValues([
+        ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'customer_phone_number', 'customer_name', 'call_status1', 'call_status2', 'reason_for_refusal', 'reason_for_refusal_category', 'reason_for_appointment', 'reason_for_appointment_category', 'summary', 'full_transcript']
       ]);
     }
 
@@ -279,16 +279,14 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
     var newRow = lastRow + 1;
     Logger.log('挿入行: ' + newRow);
 
-    // データを配列として準備（新しい順序に合わせる）
+    // データを配列として準備（新しい順序に合わせる - sales_personとcustomer_companyを削除）
     var rowData = [
       callData.recordId,
       callData.callDate,
       callData.callTime,
       callData.salesPhoneNumber || '',
       callData.salesCompany || '',
-      callData.salesPerson || '',
       callData.customerPhoneNumber || '',
-      callData.customerCompany || '',
       callData.customerName || '',
       callData.callStatus1 || '',
       callData.callStatus2 || '',
@@ -421,8 +419,6 @@ function processBatch() {
           // 最低限の情報を生成して処理を続行
           extractedInfo = {
             sales_company: '不明（抽出エラー）',
-            sales_person: '不明（抽出エラー）',
-            customer_company: '不明（抽出エラー）',
             customer_name: '不明（抽出エラー）',
             call_status1: '',
             call_status2: '',
@@ -435,8 +431,6 @@ function processBatch() {
         // 抽出情報のチェック
         Logger.log('情報抽出結果: ' + JSON.stringify({
           sales_company: extractedInfo.sales_company,
-          sales_person: extractedInfo.sales_person,
-          customer_company: extractedInfo.customer_company,
           call_status1: extractedInfo.call_status1,
           call_status2: extractedInfo.call_status2,
           summaryLength: extractedInfo.summary ? extractedInfo.summary.length : 0
@@ -467,8 +461,6 @@ function processBatch() {
           salesPhoneNumber: metadata.salesPhoneNumber,
           customerPhoneNumber: metadata.customerPhoneNumber,
           salesCompany: extractedInfo.sales_company,
-          salesPerson: extractedInfo.sales_person,
-          customerCompany: extractedInfo.customer_company,
           customerName: extractedInfo.customer_name,
           callStatus1: extractedInfo.call_status1,
           callStatus2: extractedInfo.call_status2,

@@ -25,13 +25,13 @@ var InformationExtractor = (function () {
     }
 
     try {
-      // 短すぎるテキストの場合は早期リターン（ハルシネーション防止）
+      // テキストが非常に短い場合も空文字列を出力
       if (text.length < 20) {
         Logger.log('テキストが短すぎるため解析を省略します: ' + text);
         return {
           sales_company: "",
-          sales_person: "",
-          customer_company: "",
+          sales_person: "", // vlookup関数を使うため常に空文字列
+          customer_company: "", // vlookup関数を使うため常に空文字列
           customer_name: "",
           call_status1: "非コンタクト", // 短すぎる会話は非コンタクトに変更
           call_status2: "",
@@ -44,19 +44,21 @@ var InformationExtractor = (function () {
       }
 
       // 会話が短い、または中断されている場合の簡易判定
-      if (text.length < 150 ||
-        /また改め|また連絡|失礼します|失礼いたします|お時間.*ない|急いで|後で|担当者.*いない|取次.*できない/.test(text)) {
-        // 会話が短い、または中断を示す表現がある場合
+      // 会話の長さの制限を緩和し、より多くの会話で情報抽出を実行する
+      if ((text.length < 100 && /また改め|また連絡|失礼します|失礼いたします|お時間.*ない|急いで|後で|担当者.*いない|取次.*できない/.test(text)) ||
+        (text.length < 50)) {
+        // 会話が非常に短い、または中断を示す表現がある場合
 
-        // 具体的な製品説明があるかどうかを確認
-        var hasProductExplanation = /製品.*特徴|サービス.*特徴|具体的.*機能|活用方法|導入事例|料金.*プラン|詳細.*説明|メリット/.test(text);
+        // 対話形式の会話かどうかを確認（会話らしいパターンを検出）
+        var hasConversationPattern = /【営業担当】.*【お客様】|【お客様】.*【営業担当】|［営業担当］.*［お客様］|［お客様］.*［営業担当］|\[営業担当\].*\[お客様\]|\[お客様\].*\[営業担当\]|営業担当.*お客様|お客様.*営業担当/.test(text);
 
-        if (!hasProductExplanation) {
-          Logger.log('会話が短いまたは中断されており、具体的な製品説明がないため非コンタクト判定: ' + text);
+        // 会話には見えても製品説明がない場合のみ非コンタクト判定
+        if (!hasConversationPattern || (text.length < 80 && !/製品|サービス|ソリューション|事業|ご提案|ご案内|弊社|特徴|機能|導入|ご説明/.test(text))) {
+          Logger.log('会話が非常に短いまたは対話形式ではないため非コンタクト判定: ' + text);
           return {
             sales_company: "",
-            sales_person: "",
-            customer_company: "",
+            sales_person: "", // vlookup関数を使うため常に空文字列
+            customer_company: "", // vlookup関数を使うため常に空文字列
             customer_name: "",
             call_status1: "非コンタクト",
             call_status2: "",
@@ -200,8 +202,8 @@ var InformationExtractor = (function () {
         // JSONパースに失敗した場合の最低限の情報
         extractedInfo = {
           sales_company: "",
-          sales_person: "",
-          customer_company: "",
+          sales_person: "", // vlookup関数を使うため常に空文字列
+          customer_company: "", // vlookup関数を使うため常に空文字列
           customer_name: "",
           call_status1: "不明",
           call_status2: "",
@@ -216,8 +218,8 @@ var InformationExtractor = (function () {
       // 抽出されたデータの検証とデフォルト値の設定
       var validatedInfo = {
         sales_company: validateSalesCompany(extractedInfo.sales_company) || "",
-        sales_person: extractedInfo.sales_person || "",
-        customer_company: extractedInfo.customer_company || "",
+        sales_person: "", // vlookup関数を使うため常に空文字列
+        customer_company: "", // vlookup関数を使うため常に空文字列
         customer_name: extractedInfo.customer_name || "",
         call_status1: validateCallStatus1(extractedInfo.call_status1) || "不明",
         call_status2: validateCallStatus2(extractedInfo.call_status2, extractedInfo.call_status1) || "",
@@ -253,12 +255,23 @@ var InformationExtractor = (function () {
       Logger.log('情報抽出結果 (JSON): ' + JSON.stringify(cleanInfo));
 
       // 会話が短い場合の追加検証（ハルシネーション防止）
-      if (text.length < 100) {
+      if (text.length < 80) {
         // 特に短い会話では、不審に具体的な情報をエラーとして検出
         var suspiciousInfo = false;
 
         // 会話に含まれない会社名が抽出されていないか確認
-        if (cleanInfo.sales_company && text.indexOf(cleanInfo.sales_company) === -1) {
+        if (cleanInfo.sales_company && text.indexOf(cleanInfo.sales_company) === -1 &&
+          // 部分的な会社名も確認
+          !text.includes('グッドワークス') &&
+          !text.includes('ENERALL') &&
+          !text.includes('トキウム') &&
+          !text.includes('TOKIUM') &&
+          !text.includes('ワーサル') &&
+          !text.includes('NOTCH') &&
+          !text.includes('ジースタイラス') &&
+          !text.includes('佑人社') &&
+          !text.includes('テコム') &&
+          !text.includes('エムスリー')) {
           cleanInfo.sales_company = "";
           suspiciousInfo = true;
         }
@@ -270,10 +283,9 @@ var InformationExtractor = (function () {
         }
 
         if (suspiciousInfo) {
-          Logger.log('短い会話から不審な情報抽出が検出されました。抽出結果をリセットします: ' + text);
-          cleanInfo.call_status1 = "不明";
-          cleanInfo.call_status2 = "";
-          cleanInfo.summary = text; // 元のテキストをそのまま返す
+          Logger.log('短い会話から不審な情報抽出が検出されました。不審なフィールドをリセットします: ' + text);
+          // AIが誤った情報を生成したと思われる場合は、その情報だけをリセット
+          // ただし、会話の結果自体はそのまま保持
         }
       }
 
@@ -452,6 +464,7 @@ var InformationExtractor = (function () {
     var firstUtterances = {}; // 各話者の最初の発言を保存
     var speakerUtteranceCounts = {}; // 各話者の発言回数
     var speakerTotalLength = {}; // 各話者の総発言文字数
+    var speakerLabels = {}; // 各話者のラベル（「営業担当」「お客様」など）
 
     for (var i = 0; i < utterances.length; i++) {
       var utterance = utterances[i];
@@ -463,11 +476,109 @@ var InformationExtractor = (function () {
         firstUtterances[speaker] = text;
         speakerUtteranceCounts[speaker] = 0;
         speakerTotalLength[speaker] = 0;
+        speakerLabels[speaker] = '';
       }
 
       speakerTexts[speaker] += text + ' ';
       speakerUtteranceCounts[speaker]++;
       speakerTotalLength[speaker] += text.length;
+
+      // 話者ラベルを検出（「営業担当」「お客様」などのマーカー）
+      var labelMatch = text.match(/^[\[【［](.+?)[\]】］]/);
+      if (labelMatch && !speakerLabels[speaker]) {
+        speakerLabels[speaker] = labelMatch[1];
+      }
+    }
+
+    // 許可リストの会社名（validateSalesCompanyから取得）
+    var allowedCompanies = [
+      "株式会社ENERALL",
+      "エムスリーヘルスデザイン株式会社",
+      "株式会社TOKIUM",
+      "株式会社グッドワークス",
+      "テコム看護",
+      "ハローワールド株式会社",
+      "株式会社ワーサル",
+      "株式会社NOTCH",
+      "株式会社ジースタイラス",
+      "株式会社佑人社"
+    ];
+
+    // 会社名の特徴的な部分のリストを作成（「株式会社」を除いた部分など）
+    var companyKeywords = allowedCompanies.map(function (company) {
+      return company.replace(/株式会社|エムスリーヘルスデザイン|テコム看護|ハローワールド/g, "").trim();
+    }).filter(function (keyword) {
+      return keyword.length > 0;
+    });
+
+    // 短い会社名キーワードは除外（例: "の"など、誤検出しやすいもの）
+    companyKeywords = companyKeywords.filter(function (keyword) {
+      return keyword.length >= 2;
+    });
+
+    // 会社名の別表記も追加
+    companyKeywords.push("ハローワールド");
+    companyKeywords.push("エムスリー");
+    companyKeywords.push("グッドワークス");
+    companyKeywords.push("ジースタイラス");
+    companyKeywords.push("ENERALL");
+    companyKeywords.push("トキウム");
+    companyKeywords.push("TOKIUM");
+    companyKeywords.push("ワーサル");
+    companyKeywords.push("NOTCH");
+    companyKeywords.push("テコム");
+
+    // 許可リスト会社名との関連性を各話者ごとに評価
+    var companyAssociations = {};
+    for (var speaker in speakerTexts) {
+      companyAssociations[speaker] = {
+        mentionedCompany: '',
+        isSelfIntroduction: false,
+        associationScore: 0
+      };
+
+      var text = speakerTexts[speaker];
+
+      // 自己紹介パターンの検出
+      var selfIntroPattern = /私は(.+?)(と申します|です|の者です|と言います|といいます|と申しますが|からです)/i;
+      var selfIntroMatch = text.match(selfIntroPattern);
+
+      // 会社名と自己紹介の関連を評価
+      for (var i = 0; i < allowedCompanies.length; i++) {
+        var company = allowedCompanies[i];
+        if (text.indexOf(company) !== -1) {
+          companyAssociations[speaker].mentionedCompany = company;
+          companyAssociations[speaker].associationScore += 3;
+
+          // 自己紹介との関連を評価
+          if (selfIntroMatch && selfIntroMatch[1].indexOf(company.replace(/株式会社/g, "").trim()) !== -1) {
+            companyAssociations[speaker].isSelfIntroduction = true;
+            companyAssociations[speaker].associationScore += 5;
+          }
+        }
+      }
+
+      // 会社名キーワードとの部分一致も確認
+      if (!companyAssociations[speaker].mentionedCompany) {
+        for (var i = 0; i < companyKeywords.length; i++) {
+          var keyword = companyKeywords[i];
+          if (text.indexOf(keyword) !== -1) {
+            // 自己紹介との関連を評価
+            var selfIntroKeywordPattern = new RegExp(keyword + "(の|から|と申します|です|の者です)");
+            if (selfIntroMatch && selfIntroMatch[1].match(selfIntroKeywordPattern)) {
+              companyAssociations[speaker].isSelfIntroduction = true;
+              companyAssociations[speaker].associationScore += 4;
+              break;
+            } else if (text.match(new RegExp(keyword + "(の|から).+?(と申します|です|の者です)"))) {
+              companyAssociations[speaker].isSelfIntroduction = true;
+              companyAssociations[speaker].associationScore += 3;
+              break;
+            } else {
+              companyAssociations[speaker].associationScore += 1;
+            }
+          }
+        }
+      }
     }
 
     // 営業担当者特有のパターン (より強力な判断材料)
@@ -501,7 +612,18 @@ var InformationExtractor = (function () {
       /失礼いたします/i,
       /お忙しいところ恐れ入り/i,
       /お時間よろしいでしょうか/i,
-      /ご興味(は|が)あります/i
+      /ご興味(は|が)あります/i,
+
+      // 担当者在籍確認（営業側の典型的な質問）
+      /いらっしゃいますでしょうか/i,
+      /ご在席でしょうか/i,
+      /お話できますでしょうか/i,
+      /ご対応いただけますでしょうか/i,
+
+      // 後日連絡系（営業側の特徴）
+      /また(ご連絡|お電話|改めて)/i,
+      /改めてご連絡/i,
+      /後ほどお電話/i
     ];
 
     // お客様特有のパターン
@@ -533,7 +655,13 @@ var InformationExtractor = (function () {
       /今は考えてい(ない|ません)/i,
       /予算が(ない|厳しい)/i,
       /他社(で|と)契約/i,
-      /担当者に(確認|連絡)/i
+      /担当者に(確認|連絡)/i,
+
+      // 不在応答（お客様側の特徴）
+      /席を外して/i,
+      /不在です/i,
+      /戻られる(の|ん)は/i,
+      /時以降(なら|に|で|だと)/i
     ];
 
     // 自己紹介パターンの検出（会社名・個人名の抽出方法）
@@ -558,16 +686,41 @@ var InformationExtractor = (function () {
     for (var speaker in speakerTexts) {
       speakerScores[speaker] = {
         salesScore: 0,
-        customerScore: 0
+        customerScore: 0,
+        confidence: 0 // 信頼度
       };
 
       var text = speakerTexts[speaker];
       var firstText = firstUtterances[speaker];
+      var label = speakerLabels[speaker];
+
+      // 話者ラベルがある場合は、それに基づいて初期スコアを付与
+      if (label) {
+        if (/営業|企業|会社|担当|オペレータ/.test(label)) {
+          speakerScores[speaker].salesScore += 2;
+          speakerScores[speaker].confidence += 1;
+        } else if (/客|顧客|お客|ユーザ|利用者/.test(label)) {
+          speakerScores[speaker].customerScore += 2;
+          speakerScores[speaker].confidence += 1;
+        }
+      }
+
+      // 許可リスト会社との関連性スコアを加算
+      if (companyAssociations[speaker].associationScore > 0) {
+        speakerScores[speaker].salesScore += companyAssociations[speaker].associationScore;
+
+        // 自己紹介での許可リスト会社名の言及は非常に強い営業側の証拠
+        if (companyAssociations[speaker].isSelfIntroduction) {
+          speakerScores[speaker].salesScore += 5;
+          speakerScores[speaker].confidence += 3;
+        }
+      }
 
       // 営業担当者パターンのマッチをチェック
       for (var i = 0; i < salesPatterns.length; i++) {
         if (text.match(salesPatterns[i])) {
           speakerScores[speaker].salesScore += 2; // 重み付けスコア
+          speakerScores[speaker].confidence += 0.5;
         }
       }
 
@@ -575,6 +728,7 @@ var InformationExtractor = (function () {
       for (var i = 0; i < customerPatterns.length; i++) {
         if (text.match(customerPatterns[i])) {
           speakerScores[speaker].customerScore += 2; // 重み付けスコア
+          speakerScores[speaker].confidence += 0.5;
         }
       }
 
@@ -582,12 +736,14 @@ var InformationExtractor = (function () {
       for (var i = 0; i < introductionPatterns.sales.length; i++) {
         if (text.match(introductionPatterns.sales[i])) {
           speakerScores[speaker].salesScore += 2; // 自己紹介は重要な指標
+          speakerScores[speaker].confidence += 0.5;
         }
       }
 
       for (var i = 0; i < introductionPatterns.customer.length; i++) {
         if (text.match(introductionPatterns.customer[i])) {
           speakerScores[speaker].customerScore += 2; // 自己紹介は重要な指標
+          speakerScores[speaker].confidence += 0.5;
         }
       }
 
@@ -603,11 +759,28 @@ var InformationExtractor = (function () {
       if (firstText.length <= 10) {
         speakerScores[speaker].customerScore += 1;
       }
+
+      // 質問の方向性の分析
+      if (/いらっしゃいますか|おりますか|できますか|よろしいですか|\?/.test(text)) {
+        // 質問が多い方が営業の可能性が高い
+        speakerScores[speaker].salesScore += 1.5;
+      }
+
+      // 謝罪パターンの分析（営業担当は謝罪が多い）
+      if ((text.match(/すみません|申し訳|失礼|ごめん/g) || []).length > 2) {
+        speakerScores[speaker].salesScore += 1.5;
+      }
     }
 
     // スコアに基づいて役割を決定
     for (var speaker in speakerScores) {
       var scores = speakerScores[speaker];
+
+      // 許可リスト会社名との関連が非常に強い場合（自己紹介など）は、それを優先
+      if (companyAssociations[speaker].isSelfIntroduction) {
+        speakerRoles[speaker] = 'sales';
+        continue;
+      }
 
       if (scores.salesScore > scores.customerScore) {
         speakerRoles[speaker] = 'sales';
@@ -634,12 +807,33 @@ var InformationExtractor = (function () {
       var diff0 = Math.abs(scores0.salesScore - scores0.customerScore);
       var diff1 = Math.abs(scores1.salesScore - scores1.customerScore);
 
-      if (diff0 >= diff1) {
-        // speaker0のスコア差が大きい場合はその判定を維持し、speaker1を反対の役割に
+      // 信頼度も考慮
+      var confidence0 = scores0.confidence;
+      var confidence1 = scores1.confidence;
+
+      if ((diff0 >= diff1 && confidence0 >= confidence1) || (confidence0 > confidence1 * 1.5)) {
+        // speaker0のスコア差が大きいか信頼度が著しく高い場合はその判定を維持し、speaker1を反対の役割に
         speakerRoles[speakers[1]] = (speakerRoles[speakers[0]] === 'sales') ? 'customer' : 'sales';
-      } else {
-        // speaker1のスコア差が大きい場合はその判定を維持し、speaker0を反対の役割に
+      } else if ((diff1 > diff0 && confidence1 >= confidence0) || (confidence1 > confidence0 * 1.5)) {
+        // speaker1のスコア差が大きいか信頼度が著しく高い場合はその判定を維持し、speaker0を反対の役割に
         speakerRoles[speakers[0]] = (speakerRoles[speakers[1]] === 'sales') ? 'customer' : 'sales';
+      } else {
+        // それでも判断が難しい場合は、営業パターンの一致度が高い方を営業担当に
+        var salesPatternCount0 = 0;
+        var salesPatternCount1 = 0;
+
+        for (var i = 0; i < salesPatterns.length; i++) {
+          if (speakerTexts[speakers[0]].match(salesPatterns[i])) salesPatternCount0++;
+          if (speakerTexts[speakers[1]].match(salesPatterns[i])) salesPatternCount1++;
+        }
+
+        if (salesPatternCount0 > salesPatternCount1) {
+          speakerRoles[speakers[0]] = 'sales';
+          speakerRoles[speakers[1]] = 'customer';
+        } else {
+          speakerRoles[speakers[0]] = 'customer';
+          speakerRoles[speakers[1]] = 'sales';
+        }
       }
     }
 
@@ -763,8 +957,8 @@ var InformationExtractor = (function () {
     // 不自然な単語や表現を修正
     var cleanInfo = {
       sales_company: cleanText(info.sales_company),
-      sales_person: cleanText(info.sales_person),
-      customer_company: cleanText(info.customer_company),
+      sales_person: "", // vlookup関数を使うため常に空文字列を返す
+      customer_company: "", // vlookup関数を使うため常に空文字列を返す
       customer_name: cleanText(info.customer_name),
       call_status1: info.call_status1,
       call_status2: info.call_status2,
