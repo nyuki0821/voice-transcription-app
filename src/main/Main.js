@@ -599,6 +599,8 @@ function recoverInterruptedFiles() {
       total: interruptedFiles.length,
       recovered: 0,
       failed: 0,
+      recordIdFound: 0,
+      recordIdNotFound: 0,
       details: []
     };
 
@@ -609,17 +611,44 @@ function recoverInterruptedFiles() {
       try {
         Logger.log('ファイル復旧処理: ' + file.getName());
 
-        // ファイルからメタデータを取得
-        var metadata = extractMetadataFromFile(file.getName());
+        // ファイル名からrecord_idを抽出する試み
+        var recordId = null;
 
+        // まず、メタデータから取得を試みる
+        var metadata = extractMetadataFromFile(file.getName());
         if (metadata && metadata.recordId) {
+          recordId = metadata.recordId;
+          results.recordIdFound++;
+          Logger.log('メタデータからrecord_idを取得: ' + recordId);
+        }
+        // メタデータからの取得に失敗した場合、ファイル名からのパターン抽出を試みる
+        else {
+          // ファイル名からのrecord_id抽出パターン（例：zoom_call_20250512014720_7ca69b8c0349417cb98159a24b91c937.mp3）
+          var fileNamePattern = /.*_([a-f0-9]{32}|[a-f0-9-]{36})\.mp3$/i;
+          var matches = file.getName().match(fileNamePattern);
+
+          if (matches && matches.length > 1) {
+            recordId = matches[1];
+            results.recordIdFound++;
+            Logger.log('ファイル名パターンからrecord_idを取得: ' + recordId);
+          } else {
+            results.recordIdNotFound++;
+            Logger.log('record_idを特定できませんでした: ' + file.getName());
+          }
+        }
+
+        // 状態を更新
+        if (recordId) {
           // Recordingsシートの文字起こし状態を更新 (INTERRUPTED)
           updateTranscriptionStatusByRecordId(
-            metadata.recordId,
+            recordId,
             'INTERRUPTED',
             '',
             Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
           );
+        } else {
+          // recordIdが取得できなくても処理は続行する
+          Logger.log('警告: record_idが特定できないため、Recordingsシートの状態更新をスキップします');
         }
 
         // ファイルを未処理フォルダに移動
@@ -629,8 +658,9 @@ function recoverInterruptedFiles() {
         results.recovered++;
         results.details.push({
           fileName: file.getName(),
+          recordId: recordId || 'unknown',
           status: 'recovered',
-          message: '未処理フォルダに復旧しました'
+          message: '未処理フォルダに復旧しました' + (recordId ? '' : '（record_id不明）')
         });
       } catch (error) {
         Logger.log('ファイル復旧エラー: ' + error.toString());
@@ -652,6 +682,8 @@ function recoverInterruptedFiles() {
       '対象=' + results.total + '件, ' +
       '復旧=' + results.recovered + '件, ' +
       '失敗=' + results.failed + '件, ' +
+      'ID特定=' + results.recordIdFound + '件, ' +
+      'ID不明=' + results.recordIdNotFound + '件, ' +
       '処理時間=' + processingTime + '秒';
 
     Logger.log(summary);
@@ -732,6 +764,11 @@ function processBatchOnSchedule() {
     var recoveryResult = recoverInterruptedFiles();
     Logger.log('スケジュール実行: 中断ファイル復旧結果: ' + recoveryResult);
 
+    // エラーファイル復旧処理を実行（1回限りのリトライ）
+    Logger.log('スケジュール実行: エラーファイルの復旧処理を開始します...');
+    var errorRecoveryResult = recoverErrorFiles();
+    Logger.log('スケジュール実行: エラーファイル復旧結果: ' + errorRecoveryResult);
+
     // 処理を実行
     return processBatch();
   } else {
@@ -768,6 +805,11 @@ function main() {
     Logger.log('中断されたファイルの復旧処理を開始します...');
     var recoveryResult = recoverInterruptedFiles();
     Logger.log('中断ファイル復旧結果: ' + recoveryResult);
+
+    // 0-2. エラーファイルの復旧処理（1回限りのリトライ）
+    Logger.log('エラーファイルの復旧処理を開始します...');
+    var errorRecoveryResult = recoverErrorFiles();
+    Logger.log('エラーファイル復旧結果: ' + errorRecoveryResult);
 
     // 1. Zoom録音ファイルの取得処理
     Logger.log('Recordingsシートからの録音ファイル取得処理を開始します（タイムスタンプが古い順に処理）...');
@@ -971,4 +1013,130 @@ function onOpen() {
     .addItem('直近48時間の録音を取得', 'TriggerManager.fetchLast48HoursRecordings')
     .addItem('すべての未処理録音を取得', 'TriggerManager.fetchAllPendingRecordings')
     .addToUi();
+}
+
+/**
+ * エラーフォルダにあるファイルを未処理フォルダに戻す
+ * エラーになったファイルを1回だけリトライする
+ */
+function recoverErrorFiles() {
+  var startTime = new Date();
+  Logger.log('エラーファイル復旧処理開始: ' + startTime);
+
+  try {
+    // 設定を取得
+    var localSettings = getSystemSettings();
+
+    if (!localSettings.ERROR_FOLDER_ID) {
+      throw new Error('エラーフォルダIDが設定されていません');
+    }
+
+    if (!localSettings.SOURCE_FOLDER_ID) {
+      throw new Error('処理対象フォルダIDが設定されていません');
+    }
+
+    // エラーフォルダのファイルを取得
+    var errorFolder = DriveApp.getFolderById(localSettings.ERROR_FOLDER_ID);
+    var files = errorFolder.getFiles();
+    var errorFiles = [];
+
+    while (files.hasNext()) {
+      var file = files.next();
+      var mimeType = file.getMimeType() || "";
+
+      // 音声ファイルのみを対象とする
+      if (mimeType.indexOf('audio/') === 0 ||
+        mimeType === 'application/octet-stream' ||
+        file.getName().toLowerCase().indexOf('.mp3') !== -1) {
+
+        // ファイルの説明を取得してリトライ済みかチェック
+        var description = file.getDescription() || "";
+        var hasRetried = description.indexOf("[RETRIED]") >= 0;
+
+        if (!hasRetried) {
+          errorFiles.push(file);
+        } else {
+          Logger.log('すでにリトライ済みのファイルはスキップ: ' + file.getName());
+        }
+      }
+    }
+
+    Logger.log('リトライ対象のエラーファイル数: ' + errorFiles.length);
+
+    if (errorFiles.length === 0) {
+      return 'リトライ対象のエラーファイルはありませんでした。';
+    }
+
+    // 復旧結果のトラッキング
+    var results = {
+      total: errorFiles.length,
+      recovered: 0,
+      failed: 0,
+      details: []
+    };
+
+    // ファイルを復旧
+    for (var i = 0; i < errorFiles.length; i++) {
+      var file = errorFiles[i];
+
+      try {
+        Logger.log('エラーファイル復旧処理: ' + file.getName());
+
+        // ファイルからメタデータを取得
+        var metadata = extractMetadataFromFile(file.getName());
+
+        if (metadata && metadata.recordId) {
+          // Recordingsシートの文字起こし状態を更新 (RETRY)
+          updateTranscriptionStatusByRecordId(
+            metadata.recordId,
+            'RETRY',
+            '',
+            Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
+          );
+        }
+
+        // 元の説明を保持し、リトライ済みマークを追加
+        var originalDescription = file.getDescription() || "";
+        file.setDescription(originalDescription + " [RETRIED]");
+
+        // ファイルを未処理フォルダに移動
+        FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
+
+        // 結果を記録
+        results.recovered++;
+        results.details.push({
+          fileName: file.getName(),
+          status: 'recovered',
+          message: 'エラーファイルを未処理フォルダに復旧しました（1回限りのリトライ）'
+        });
+      } catch (error) {
+        Logger.log('エラーファイル復旧処理エラー: ' + error.toString());
+
+        results.failed++;
+        results.details.push({
+          fileName: file.getName(),
+          status: 'error',
+          message: error.toString()
+        });
+      }
+    }
+
+    // 処理結果のログ出力
+    var endTime = new Date();
+    var processingTime = (endTime - startTime) / 1000; // 秒単位
+
+    var summary = 'エラーファイル復旧処理完了: ' +
+      '対象=' + results.total + '件, ' +
+      '復旧=' + results.recovered + '件, ' +
+      '失敗=' + results.failed + '件, ' +
+      '処理時間=' + processingTime + '秒';
+
+    Logger.log(summary);
+    return summary;
+
+  } catch (error) {
+    var errorMessage = 'エラーファイル復旧処理でエラーが発生: ' + error.toString();
+    Logger.log(errorMessage);
+    return errorMessage;
+  }
 }
