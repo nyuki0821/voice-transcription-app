@@ -105,7 +105,8 @@ var InformationExtractor = (function () {
         "・株式会社ワーサル\n" +
         "・株式会社NOTCH\n" +
         "・株式会社ジースタイラス\n" +
-        "・株式会社佑人社\n\n" +
+        "・株式会社佑人社\n" +
+        "・株式会社リディラバ\n\n" +
         "【call_statusの定義】\n" +
         "・call_status1：\n" +
         "  ・コンタクト: 担当者に関わらず、製品・サービスの詳細な説明ができた場合。単に「ご案内」と言っただけでは不十分で、製品・サービスの具体的な内容や特徴について説明できた場合のみ。\n" +
@@ -271,7 +272,8 @@ var InformationExtractor = (function () {
           !text.includes('ジースタイラス') &&
           !text.includes('佑人社') &&
           !text.includes('テコム') &&
-          !text.includes('エムスリー')) {
+          !text.includes('エムスリー') &&
+          !text.includes('リディラバ')) {
           cleanInfo.sales_company = "";
           suspiciousInfo = true;
         }
@@ -501,7 +503,8 @@ var InformationExtractor = (function () {
       "株式会社ワーサル",
       "株式会社NOTCH",
       "株式会社ジースタイラス",
-      "株式会社佑人社"
+      "株式会社佑人社",
+      "株式会社リディラバ"
     ];
 
     // 会社名の特徴的な部分のリストを作成（「株式会社」を除いた部分など）
@@ -527,6 +530,7 @@ var InformationExtractor = (function () {
     companyKeywords.push("ワーサル");
     companyKeywords.push("NOTCH");
     companyKeywords.push("テコム");
+    companyKeywords.push("リディラバ");
 
     // 許可リスト会社名との関連性を各話者ごとに評価
     var companyAssociations = {};
@@ -1018,7 +1022,8 @@ var InformationExtractor = (function () {
       "株式会社ワーサル",
       "株式会社NOTCH",
       "株式会社ジースタイラス",
-      "株式会社佑人社"
+      "株式会社佑人社",
+      "株式会社リディラバ"
     ];
 
     // 完全一致をチェック
