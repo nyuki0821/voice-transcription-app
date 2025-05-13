@@ -52,9 +52,11 @@ var InformationExtractor = (function () {
         // 対話形式の会話かどうかを確認（会話らしいパターンを検出）
         var hasConversationPattern = /【営業担当】.*【お客様】|【お客様】.*【営業担当】|［営業担当］.*［お客様］|［お客様］.*［営業担当］|\[営業担当\].*\[お客様\]|\[お客様\].*\[営業担当\]|営業担当.*お客様|お客様.*営業担当/.test(text);
 
-        // 会話には見えても製品説明がない場合のみ非コンタクト判定
-        if (!hasConversationPattern || (text.length < 80 && !/製品|サービス|ソリューション|事業|ご提案|ご案内|弊社|特徴|機能|導入|ご説明/.test(text))) {
-          Logger.log('会話が非常に短いまたは対話形式ではないため非コンタクト判定: ' + text);
+        // 会話には見えても製品説明がない場合や適切な担当者と話せていない場合は非コンタクト判定
+        if (!hasConversationPattern ||
+          (text.length < 80 && !/製品|サービス|ソリューション|事業|ご提案|ご案内|弊社|特徴|機能|導入|ご説明/.test(text)) ||
+          /受付|案内|他部署|本社|システム.*部門|経理.*部門|担当者.*不在|担当者.*いない|担当者.*変わり|別の方|取り次ぎ|つないでください/.test(text)) {
+          Logger.log('会話が非常に短い、対話形式ではない、または適切な担当者と話せていないため非コンタクト判定: ' + text);
           return {
             sales_company: "",
             sales_person: "", // vlookup関数を使うため常に空文字列
@@ -66,7 +68,7 @@ var InformationExtractor = (function () {
             reason_for_refusal_category: "",
             reason_for_appointment: "",
             reason_for_appointment_category: "",
-            summary: "会話が短いまたは中断されているため詳細な説明ができていません。"
+            summary: "会話が短い、中断されている、または適切な担当者と話せていないため詳細な説明ができていません。"
           };
         }
       }
@@ -95,26 +97,29 @@ var InformationExtractor = (function () {
         "\"call_status1\":\"\", \"call_status2\":\"\", \"reason_for_refusal\":\"\", \"reason_for_refusal_category\":\"\", " +
         "\"reason_for_appointment\":\"\", \"reason_for_appointment_category\":\"\", \"summary\":\"\"}\n\n" +
         "【sales_companyの候補リスト】\n" +
-        "営業会社名は以下のリストから最も適切なものを選んでください。会話中に名前が明示的に出ていない場合は空欄にしてください：\n" +
-        "・株式会社ENERALL\n" +
-        "・エムスリーヘルスデザイン株式会社\n" +
+        "営業会社名は以下のリストから最も適切なものを選んでください。会話は基本的にこのリストの会社のいずれかから行われています。営業担当者が自社名を名乗っている部分を特定し、該当する会社を選択してください。名乗りがない場合や自動音声のみの非常に短い会話でない限り、必ずいずれかの会社を選択してください：\n" +
+        "・株式会社ENERALL（エネラル）\n" +
+        "・エムスリーヘルスデザイン株式会社（エムスリーヘルスデザイン）\n" +
         "・株式会社TOKIUM\n" +
         "・株式会社グッドワークス\n" +
         "・テコム看護\n" +
         "・ハローワールド株式会社\n" +
         "・株式会社ワーサル\n" +
-        "・株式会社NOTCH\n" +
+        "・株式会社NOTCH（ノッチ）\n" +
         "・株式会社ジースタイラス\n" +
-        "・株式会社佑人社\n" +
-        "・株式会社リディラバ\n\n" +
+        "・株式会社佑人社（ゆうじんしゃ）\n" +
+        "・株式会社リディラバ\n" +
+        "・株式会社インフィニットマインド\n\n" +
         "【call_statusの定義】\n" +
         "・call_status1：\n" +
-        "  ・コンタクト: 担当者に関わらず、製品・サービスの詳細な説明ができた場合。単に「ご案内」と言っただけでは不十分で、製品・サービスの具体的な内容や特徴について説明できた場合のみ。\n" +
+        "  ・コンタクト: 意思決定に関わる担当者と会話 かつ 製品・サービスの詳細な説明ができた場合。単に「ご案内」と言っただけでは不十分で、製品・サービスの具体的な内容や特徴について適切な担当者へ説明できた場合のみ。取次担当者や受付の方には説明できても、最終的に意思決定者や関連部署の担当者に説明できなかった場合は非コンタクト。\n" +
         "  ・非コンタクト: 自動音声のみや、受付で止まった場合。製品・サービスの説明ができなかった場合。担当者不在や取次ぎ失敗で詳細説明ができなかった場合も含む。会話が短く中断された場合も非コンタクト。\n" +
-        "・call_status2（call_status1が「コンタクト」の場合のみ入力）：\n" +
-        "  ・アポイント: 次回のアポイントを取得できた場合\n" +
+        "・call_status2（call_status1に関わらず入力）：\n" +
+        "  ・アポイント: 次回のアポイントを取得できた場合（明確な日時の約束がある場合）\n" +
         "  ・断り: 明確に興味がない、必要ないと断られた場合\n" +
-        "  ・継続: 検討する、持ち帰る等で終話した場合\n" +
+        "  ・継続 (資料送付): 資料送付で終話した場合（「資料をお送りします」「DMを送ります」「メールで送ります」など）\n" +
+        "  ・継続 (時期を改める): 明確な日時ではないが、「○月頃に」「繁忙期が過ぎたら」「夕方ごろ」「午後に」など、ざっくりとした時間帯を指定された場合\n" +
+        "  ・継続 (その他): 上記以外の継続（「検討します」「持ち帰ります」「社内で共有します」など）\n" +
         "・不明: 文章が短すぎる等で判断できない場合は不明と入力\n\n" +
         "【reason_for_refusal_categoryの定義】\n" +
         "断りの理由を以下のカテゴリから選択する（断りの場合のみ入力）：\n" +
@@ -244,11 +249,6 @@ var InformationExtractor = (function () {
         validatedInfo.reason_for_appointment_category = "";
       }
 
-      // 非コンタクトの場合はcall_status2を空にする
-      if (validatedInfo.call_status1 !== "コンタクト") {
-        validatedInfo.call_status2 = "";
-      }
-
       // 抽出情報のポスト処理
       var cleanInfo = postProcessExtractedInfo(validatedInfo);
 
@@ -265,15 +265,30 @@ var InformationExtractor = (function () {
           // 部分的な会社名も確認
           !text.includes('グッドワークス') &&
           !text.includes('ENERALL') &&
+          !text.includes('ENERRALL') && // ENERALL誤認識パターン
+          !text.includes('エネラル') && // ENERALLの読み方
+          !text.includes('エネラール') && // ENERALLの読み方
+          !text.includes('エナラル') && // ENERALLの誤認識パターン
           !text.includes('トキウム') &&
           !text.includes('TOKIUM') &&
           !text.includes('ワーサル') &&
           !text.includes('NOTCH') &&
+          !text.includes('NOCH') && // NOTCH誤認識パターン
+          !text.includes('ノッチ') && // NOTCHの読み方
+          !text.includes('ノーチ') && // NOTCHの誤認識パターン
           !text.includes('ジースタイラス') &&
           !text.includes('佑人社') &&
+          !text.includes('有人社') && // 佑人社の誤認識パターン
+          !text.includes('勇人社') && // 佑人社の誤認識パターン
+          !text.includes('優人社') && // 佑人社の誤認識パターン
+          !text.includes('ゆうじんしゃ') && // 佑人社の読み方
+          !text.includes('ユウジンシャ') && // 佑人社の読み方
           !text.includes('テコム') &&
           !text.includes('エムスリー') &&
-          !text.includes('リディラバ')) {
+          !text.includes('エムスリーヘルス') && // エムスリーヘルスデザインの短縮表記
+          !text.includes('M3ヘルス') && // エムスリーヘルスデザインの誤認識パターン
+          !text.includes('リディラバ') &&
+          !text.includes('インフィニットマインド')) {
           cleanInfo.sales_company = "";
           suspiciousInfo = true;
         }
@@ -321,9 +336,9 @@ var InformationExtractor = (function () {
     }
 
     // 類似のステータスを標準化
-    if (/製品.*詳細説明|サービス.*詳細説明|具体的.*説明|詳しく説明|プレゼン.*できた|十分.*紹介/.test(normalizedStatus)) {
+    if (/意思決定.*担当者.*説明|適切.*担当者.*説明|製品.*詳細説明.*担当者|サービス.*詳細説明.*担当者|具体的.*説明.*担当者|詳しく説明.*担当者|プレゼン.*できた.*担当者|十分.*紹介.*担当者/.test(normalizedStatus)) {
       return "コンタクト";
-    } else if (/自動音声|受付|説明.*できなかった|非コンタクト|取次.*失敗|担当者.*不在|担当者.*いない|また改め|短い会話|中断/.test(normalizedStatus)) {
+    } else if (/自動音声|受付|説明.*できなかった|非コンタクト|取次.*失敗|担当者.*不在|担当者.*いない|また改め|短い会話|中断|取次担当者のみ|受付のみ|適切な担当者.*つながらない|本社.*紹介|他部署.*紹介/.test(normalizedStatus)) {
       return "非コンタクト";
     }
 
@@ -338,33 +353,47 @@ var InformationExtractor = (function () {
    * @return {string} - 検証済みのcall_status2
    */
   function validateCallStatus2(status, status1) {
-    // call_status1が「コンタクト」でない場合は空文字を返す
-    if (validateCallStatus1(status1) !== "コンタクト") {
-      return "";
-    }
-
-    if (!status) return "継続"; // コンタクトの場合、デフォルトは継続
-
-    var normalizedStatus = String(status).trim();
+    // 非コンタクトの場合でも、明確な断りの場合は「断り」、それ以外は継続の詳細分類として扱う
+    var normalizedStatus = status ? String(status).trim() : "";
 
     // 許可されたステータス値
-    var allowedStatuses = ["アポイント", "断り", "継続", "不明"];
+    var allowedStatuses = [
+      "アポイント",
+      "断り",
+      "継続 (資料送付)",
+      "継続 (時期を改める)",
+      "継続 (その他)",
+      "不明"
+    ];
 
     if (allowedStatuses.indexOf(normalizedStatus) !== -1) {
       return normalizedStatus;
     }
 
-    // 類似のステータスを標準化
-    if (/アポ|アポイント|訪問|面談|打ち合わせ|日程|伺|承諾/.test(normalizedStatus)) {
+    // コンタクトの場合も非コンタクトの場合も共通の判定ロジック
+    // アポイントの判定
+    if (/アポイント|訪問|面談|打ち合わせ|明確.*日程|([0-9１-９]+日|[0-9１-９]+時|[0-9１-９]+月[0-9１-９]+日).*伺|約束|確定/.test(normalizedStatus)) {
       return "アポイント";
-    } else if (/断り|断わり|拒否|お断り|不要|必要ない|興味がない|結構/.test(normalizedStatus)) {
+    }
+    // 断りの判定
+    else if (/断り|断わり|拒否|お断り|不要|必要ない|興味がない|結構|電話(しないで|するな|お断り)|迷惑|二度と電話/.test(normalizedStatus)) {
       return "断り";
-    } else if (/検討|持ち帰|考え|相談|確認|後日|連絡|担当者|継続/.test(normalizedStatus)) {
-      return "継続";
+    }
+    // 継続（資料送付）の判定
+    else if (/資料|カタログ|パンフレット|送付|送り|メール|DM|PDF|案内/.test(normalizedStatus)) {
+      return "継続 (資料送付)";
+    }
+    // 継続（時期を改める）の判定
+    else if (/([0-9１-９]+月頃|来月|再来月|四半期|半期|年度|年末|年始|繁忙期|閑散期)|(時期|タイミング).*(改め|後|変わったら)|落ち着いたら|夕方|午後|朝|昼|夜|明日|明後日|週明け|週末/.test(normalizedStatus)) {
+      return "継続 (時期を改める)";
+    }
+    // 継続（その他）の判定 - これがデフォルト
+    else if (/検討|持ち帰|考え|相談|確認|後日|連絡|担当者|継続|共有|伝え/.test(normalizedStatus) || normalizedStatus.includes("継続")) {
+      return "継続 (その他)";
     }
 
-    // デフォルトでは継続として扱う
-    return "継続";
+    // デフォルトでは継続(その他)として扱う
+    return "継続 (その他)";
   }
 
   /**
@@ -504,7 +533,8 @@ var InformationExtractor = (function () {
       "株式会社NOTCH",
       "株式会社ジースタイラス",
       "株式会社佑人社",
-      "株式会社リディラバ"
+      "株式会社リディラバ",
+      "株式会社インフィニットマインド"
     ];
 
     // 会社名の特徴的な部分のリストを作成（「株式会社」を除いた部分など）
@@ -522,15 +552,31 @@ var InformationExtractor = (function () {
     // 会社名の別表記も追加
     companyKeywords.push("ハローワールド");
     companyKeywords.push("エムスリー");
+    companyKeywords.push("エムスリーヘルス"); // 短縮表記
+    companyKeywords.push("M3ヘルス"); // 誤認識パターン
     companyKeywords.push("グッドワークス");
     companyKeywords.push("ジースタイラス");
     companyKeywords.push("ENERALL");
+    companyKeywords.push("ENERRALL"); // 誤認識パターン
+    companyKeywords.push("エネラル"); // ENERALLの読み方
+    companyKeywords.push("エネラール"); // ENERALLの読み方
+    companyKeywords.push("エナラル"); // ENERALLの誤認識パターン
     companyKeywords.push("トキウム");
     companyKeywords.push("TOKIUM");
     companyKeywords.push("ワーサル");
     companyKeywords.push("NOTCH");
+    companyKeywords.push("NOCH"); // NOTCH誤認識パターン
+    companyKeywords.push("ノッチ"); // NOTCHの読み方
+    companyKeywords.push("ノーチ"); // NOTCHの誤認識パターン
     companyKeywords.push("テコム");
     companyKeywords.push("リディラバ");
+    companyKeywords.push("インフィニットマインド");
+    companyKeywords.push("佑人社");
+    companyKeywords.push("有人社"); // 佑人社の誤認識パターン
+    companyKeywords.push("勇人社"); // 佑人社の誤認識パターン
+    companyKeywords.push("優人社"); // 佑人社の誤認識パターン
+    companyKeywords.push("ゆうじんしゃ"); // 佑人社の読み方
+    companyKeywords.push("ユウジンシャ"); // 佑人社の読み方
 
     // 許可リスト会社名との関連性を各話者ごとに評価
     var companyAssociations = {};
@@ -1011,6 +1057,26 @@ var InformationExtractor = (function () {
 
     var normalizedCompany = String(company).trim();
 
+    // ENERALL特殊対応（読み方や誤認識パターンも対応）
+    if (/ENERALL|ENERRALL|エネラル|エネラール|エナラル/i.test(normalizedCompany)) {
+      return "株式会社ENERALL";
+    }
+
+    // NOTCH特殊対応（読み方や誤認識パターンも対応）
+    if (/NOTCH|NOCH|ノッチ|ノーチ/i.test(normalizedCompany)) {
+      return "株式会社NOTCH";
+    }
+
+    // エムスリーヘルスデザイン特殊対応
+    if (/エムスリーヘルスデザイン|エムスリーヘルス|M3ヘルス/.test(normalizedCompany)) {
+      return "エムスリーヘルスデザイン株式会社";
+    }
+
+    // 佑人社の特殊対応（読み方や誤認識パターンも対応）
+    if (/佑人社|有人社|勇人社|優人社|ゆうじんしゃ|ユウジンシャ/.test(normalizedCompany)) {
+      return "株式会社佑人社";
+    }
+
     // 許可されたsales_companyのリスト
     var allowedCompanies = [
       "株式会社ENERALL",
@@ -1023,7 +1089,8 @@ var InformationExtractor = (function () {
       "株式会社NOTCH",
       "株式会社ジースタイラス",
       "株式会社佑人社",
-      "株式会社リディラバ"
+      "株式会社リディラバ",
+      "株式会社インフィニットマインド"
     ];
 
     // 完全一致をチェック
