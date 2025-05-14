@@ -295,6 +295,9 @@ function transcribeWithGPT4o(file, apiKey) {
     // レスポンスをJSONとしてパース
     const responseJson = JSON.parse(response.getContentText());
 
+    // GPT-4o APIレスポンスの詳細をログに出力
+    Logger.log('GPT-4o APIレスポンス詳細: ' + JSON.stringify(responseJson).substring(0, 1000) + '...');
+
     // シンプルに文字起こし結果を返す
     return {
       text: responseJson.text,
@@ -347,19 +350,39 @@ function transcribeWithAssemblyAI(file, apiKey) {
     const uploadResponseJson = JSON.parse(uploadResponse.getContentText());
     const audioUrl = uploadResponseJson.upload_url;
 
-    // 文字起こしリクエストを送信（話者分離を有効化）
-    // 最新のAPIドキュメントに基づいた形式に修正
+    // 言語に応じた最適なオプションを設定
+    let transcriptPayload = {
+      audio_url: audioUrl,
+      language_code: 'ja',
+      speaker_labels: true,
+      entity_detection: true  // エンティティ検出は常に有効化
+    };
+
+    // 言語に応じた機能の設定
+    if (transcriptPayload.language_code === 'ja') {
+      // 日本語では以下の機能が利用できないため除外
+      // - 感情分析 (sentiment_analysis)
+      // - 自動チャプター (auto_chapters)
+      // - 自動ハイライト (auto_highlights)
+
+      // SLAM-1モデルは日本語でも対応しているため設定
+      transcriptPayload.language_model = 'assemblyai/slam-1';
+    } else {
+      // 英語など他の言語では高度な機能を有効化
+      transcriptPayload.auto_chapters = true;
+      transcriptPayload.sentiment_analysis = true;
+      transcriptPayload.auto_highlights = true;
+      transcriptPayload.language_model = 'assemblyai/slam-1';
+    }
+
+    // 文字起こしリクエストを送信
     const transcriptOptions = {
       method: 'post',
       headers: {
         'Authorization': apiKey,
         'Content-Type': 'application/json'
       },
-      payload: JSON.stringify({
-        audio_url: audioUrl,
-        language_code: 'ja',
-        speaker_labels: true  // この形式で試す
-      }),
+      payload: JSON.stringify(transcriptPayload),
       muteHttpExceptions: true
     };
 
@@ -474,9 +497,25 @@ function transcribeWithAssemblyAI(file, apiKey) {
     const speakerCount = getSpeakerCount(pollingResponseJson.utterances || []);
     Logger.log('AssemblyAI処理完了: 話者数=' + speakerCount + ', 発話数=' + utteranceCount);
 
+    // エンティティ検出結果をログに記録
+    if (pollingResponseJson.entities) {
+      Logger.log('エンティティ検出結果: ' + JSON.stringify(pollingResponseJson.entities));
+    }
+
+    // 詳細なエンティティ情報があれば記録
+    let entitiesOriginal = [];
+    if (pollingResponseJson.results &&
+      pollingResponseJson.results.entities &&
+      Array.isArray(pollingResponseJson.results.entities)) {
+      entitiesOriginal = pollingResponseJson.results.entities;
+      Logger.log('詳細なエンティティ情報: ' + JSON.stringify(entitiesOriginal).substring(0, 500) + '...');
+    }
+
     return {
       text: pollingResponseJson.text || '',
       utterances: pollingResponseJson.utterances || [],
+      entities: pollingResponseJson.entities || {},  // エンティティ情報を追加
+      entities_original: entitiesOriginal,  // 詳細なエンティティ情報を追加
       fileName: fileName
     };
 
@@ -540,83 +579,28 @@ function mergeTranscriptions(openaiResult, assemblyAIResult) {
     // 話者分離情報がない場合は単純にOpenAIの結果を返す
     if (!utterances || utterances.length === 0) {
       Logger.log('AssemblyAIからの話者分離情報がありません。GPT-4oの結果をそのまま返します。');
-      return openaiResult;
-    }
-
-    // GPT-4oのセグメント情報を取得
-    // 注意: gpt-4o-transcribeがセグメント情報を返さない場合がある
-    const segments = openaiResult.segments || [];
-
-    // セグメント情報がない場合は代替処理
-    if (!segments || segments.length === 0) {
-      Logger.log('GPT-4oからのセグメント情報がありません。文章ベースのマージ処理を実行します。');
-
-      // GPT-4.1 miniによる高度なマージを試みる（OpenAI APIキーを使用）
-      try {
-        Logger.log('GPT-4.1 miniによる高度なマージを試みます...');
-        // getConfig()からAPIキーを再取得
-        const config = getConfig();
-        return enhanceDialogueWithGPT4Mini(openaiResult, assemblyAIResult, config.OPENAI_API_KEY);
-      } catch (miniError) {
-        Logger.log('GPT-4.1 miniによるマージでエラー: ' + miniError.toString());
-        Logger.log('通常の文章ベースマージにフォールバックします。');
-        return textBasedMerge(openaiResult, assemblyAIResult);
-      }
-    }
-
-    // 各タイムスタンプ区間ごとに話者情報を割り当て
-    const speakerMap = createSpeakerTimeMap(utterances);
-
-    // 話者IDを役割に変換（A->営業担当者、B->お客様など）
-    const speakerRoles = identifySpeakerRoles(utterances);
-
-    // 話者情報を付与したテキストを生成
-    let mergedText = '';
-    let currentSpeaker = null;
-    let currentSegments = [];
-
-    // セグメントごとに話者を判定してマージ
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
-      const startTime = segment.start;
-      const endTime = segment.end;
-
-      // この時間帯の話者を特定
-      const speaker = findSpeakerAtTime(speakerMap, startTime);
-
-      // 話者が変わったら出力
-      if (speaker !== currentSpeaker) {
-        // 前の話者のテキストを出力
-        if (currentSpeaker !== null && currentSegments.length > 0) {
-          const speakerLabel = formatSpeakerLabel(currentSpeaker, speakerRoles);
-          const text = currentSegments.join(' ');
-          mergedText += speakerLabel + ' ' + text + '\n\n';
+      return {
+        text: formatSimpleText(openaiResult.text),
+        original: {
+          openai: openaiResult,
+          assemblyAI: assemblyAIResult
         }
-
-        // 新しい話者のセグメントを開始
-        currentSpeaker = speaker;
-        currentSegments = [segment.text];
-      } else {
-        // 同じ話者の場合は追加
-        currentSegments.push(segment.text);
-      }
+      };
     }
 
-    // 最後の話者のテキストを出力
-    if (currentSpeaker !== null && currentSegments.length > 0) {
-      const speakerLabel = formatSpeakerLabel(currentSpeaker, speakerRoles);
-      const text = currentSegments.join(' ');
-      mergedText += speakerLabel + ' ' + text + '\n\n';
+    // GPT-4.1 miniによる高度なマージを試みる（OpenAI APIキーを使用）
+    try {
+      Logger.log('マージ処理メソッド: GPT-4.1 miniによる高度なマージを実行します...');
+      // getConfig()からAPIキーを再取得
+      const config = getConfig();
+      const result = enhanceDialogueWithGPT4Mini(openaiResult, assemblyAIResult, config.OPENAI_API_KEY);
+      Logger.log('GPT-4.1 miniによる高度なマージが正常に完了しました');
+      return result;
+    } catch (miniError) {
+      Logger.log('GPT-4.1 miniによるマージでエラー: ' + miniError.toString());
+      Logger.log('マージ処理メソッド: 通常の文章ベースマージにフォールバックします。');
+      return textBasedMerge(openaiResult, assemblyAIResult);
     }
-
-    return {
-      text: mergedText,
-      original: {
-        openai: openaiResult,
-        assemblyAI: assemblyAIResult
-      }
-    };
-
   } catch (error) {
     Logger.log('マージ処理中にエラー: ' + error.toString());
     // エラー時はGPT-4oの結果を簡易フォーマットして返す
@@ -658,56 +642,6 @@ function formatSimpleText(text) {
 
   // 段落をつなげて返す
   return paragraphs.join('\n\n');
-}
-
-/**
- * 話者情報をタイムスタンプマップに変換
- * @param {Array} utterances - 発話情報の配列
- * @return {Array} - 時間ごとの話者マップ
- */
-function createSpeakerTimeMap(utterances) {
-  const speakerMap = [];
-
-  for (let i = 0; i < utterances.length; i++) {
-    const u = utterances[i];
-    if (u.speaker && u.start && u.end) {
-      speakerMap.push({
-        start: u.start,
-        end: u.end,
-        speaker: u.speaker
-      });
-    }
-  }
-
-  // 開始時間でソート
-  speakerMap.sort((a, b) => a.start - b.start);
-
-  return speakerMap;
-}
-
-/**
- * 特定の時間における話者を見つける
- * @param {Array} speakerMap - 話者マップ
- * @param {number} time - 時間（ミリ秒）
- * @return {string|null} - 話者ID、見つからない場合はnull
- */
-function findSpeakerAtTime(speakerMap, time) {
-  for (let i = 0; i < speakerMap.length; i++) {
-    if (time >= speakerMap[i].start && time <= speakerMap[i].end) {
-      return speakerMap[i].speaker;
-    }
-  }
-
-  // 近い時間帯の話者を探す（50ms以内）
-  const tolerance = 50;
-  for (let i = 0; i < speakerMap.length; i++) {
-    if (Math.abs(time - speakerMap[i].start) <= tolerance ||
-      Math.abs(time - speakerMap[i].end) <= tolerance) {
-      return speakerMap[i].speaker;
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -811,7 +745,14 @@ function identifySpeakerRoles(utterances) {
  * @return {Object} - マージした結果
  */
 function textBasedMerge(openaiResult, assemblyAIResult) {
-  Logger.log('テキストベースのマージ処理を実行します...');
+  // GPT-4.1 miniに渡すための下準備としての処理かどうかを判定
+  const isForGpt41Mini = (new Error().stack || '').includes('enhanceDialogueWithGPT4Mini');
+
+  if (isForGpt41Mini) {
+    Logger.log('GPT-4.1 mini用の下準備として初期マージデータを作成中...');
+  } else {
+    Logger.log('テキストベースのマージ処理を実行します...');
+  }
 
   try {
     // AssemblyAIの結果が空またはエラーの場合はOpenAIの結果のみ返す
@@ -855,6 +796,58 @@ function textBasedMerge(openaiResult, assemblyAIResult) {
       const segment = speakerSegments[i];
       const speakerLabel = formatSpeakerLabel(segment.speaker, speakerRoles);
       mergedText += speakerLabel + ' ' + segment.text + '\n\n';
+    }
+
+    // エンティティ情報があれば追加（改善版）
+    if (assemblyAIResult.entities && Object.keys(assemblyAIResult.entities).length > 0) {
+      mergedText += '\n【検出されたエンティティ】\n';
+
+      // エンティティの種類と日本語名のマッピング
+      const entityTypeMap = {
+        'person_name': '人物名',
+        'location': '場所',
+        'organization': '組織',
+        'date': '日付',
+        'time': '時間',
+        'money': '金額',
+        'percent': 'パーセント',
+        'event': 'イベント',
+        'product': '製品',
+        'phone_number': '電話番号',
+        'email_address': 'メールアドレス',
+        'url': 'URL',
+        'age': '年齢',
+        'occupation': '職業',
+        'date_interval': '期間'
+      };
+
+      // タイプごとのエンティティカウントを表示
+      for (const [type, count] of Object.entries(assemblyAIResult.entities)) {
+        const typeJa = entityTypeMap[type] || type;
+        mergedText += `${typeJa}: ${count}件\n`;
+      }
+
+      // テキスト内の具体的なエンティティを抽出して表示
+      if (Array.isArray(assemblyAIResult.entities_original)) {
+        const entityDetails = {};
+
+        // エンティティをタイプごとにグループ化
+        assemblyAIResult.entities_original.forEach(entity => {
+          const type = entity.entity_type;
+          const typeJa = entityTypeMap[type] || type;
+
+          if (!entityDetails[typeJa]) {
+            entityDetails[typeJa] = new Set();
+          }
+          entityDetails[typeJa].add(entity.text);
+        });
+
+        // グループ化したエンティティを表示
+        mergedText += '\n【検出されたエンティティの詳細】\n';
+        for (const [typeJa, values] of Object.entries(entityDetails)) {
+          mergedText += `${typeJa}: ${Array.from(values).join('、')}\n`;
+        }
+      }
     }
 
     return {
@@ -1130,8 +1123,10 @@ function enhanceDialogueWithGPT4Mini(openaiTranscriptResult, assemblyAIResult, a
       return textBasedMerge(openaiTranscriptResult, assemblyAIResult);
     }
 
-    // 現在のマージ結果を取得
+    // 現在のマージ結果を取得（下準備として実行）
+    Logger.log('初期マージデータを準備中（下準備）...');
     const currentMergeResult = textBasedMerge(openaiTranscriptResult, assemblyAIResult);
+    Logger.log('初期マージデータの準備完了、GPT-4.1 miniによる高度な処理を開始...');
 
     // 話者ごとのセリフを抽出
     const speakerRoles = identifySpeakerRoles(utterances);
@@ -1140,6 +1135,59 @@ function enhanceDialogueWithGPT4Mini(openaiTranscriptResult, assemblyAIResult, a
     Object.keys(speakerRoles).forEach(speakerId => {
       speakerLabels[speakerId] = formatSpeakerLabel(speakerId, speakerRoles);
     });
+
+    // エンティティ情報をテキスト形式に変換
+    let entitiesText = '';
+    if (assemblyAIResult.entities && Object.keys(assemblyAIResult.entities).length > 0) {
+      entitiesText = 'エンティティ検出情報:\n';
+
+      // エンティティの種類と日本語名のマッピング
+      const entityTypeMap = {
+        'person_name': '人物名',
+        'location': '場所',
+        'organization': '組織',
+        'date': '日付',
+        'time': '時間',
+        'money': '金額',
+        'percent': 'パーセント',
+        'event': 'イベント',
+        'product': '製品',
+        'phone_number': '電話番号',
+        'email_address': 'メールアドレス',
+        'url': 'URL',
+        'age': '年齢',
+        'occupation': '職業',
+        'date_interval': '期間'
+      };
+
+      // タイプごとのエンティティカウントを表示
+      for (const [type, count] of Object.entries(assemblyAIResult.entities)) {
+        const typeJa = entityTypeMap[type] || type;
+        entitiesText += `${typeJa}: ${count}件\n`;
+      }
+
+      // 詳細なエンティティ情報があれば追加
+      if (Array.isArray(assemblyAIResult.entities_original)) {
+        const entityDetails = {};
+
+        // エンティティをタイプごとにグループ化
+        assemblyAIResult.entities_original.forEach(entity => {
+          const type = entity.entity_type;
+          const typeJa = entityTypeMap[type] || type;
+
+          if (!entityDetails[typeJa]) {
+            entityDetails[typeJa] = new Set();
+          }
+          entityDetails[typeJa].add(entity.text);
+        });
+
+        // グループ化したエンティティを表示
+        entitiesText += '\n詳細なエンティティ情報:\n';
+        for (const [typeJa, values] of Object.entries(entityDetails)) {
+          entitiesText += `${typeJa}: ${Array.from(values).join('、')}\n`;
+        }
+      }
+    }
 
     // GPT-4.1 miniに送るプロンプトを作成
     const prompt = {
@@ -1155,7 +1203,9 @@ function enhanceDialogueWithGPT4Mini(openaiTranscriptResult, assemblyAIResult, a
 3. 話者の区別を明確にしてください。AssemblyAIによる話者分離情報とGPT-4o Transcribeの文字起こしを組み合わせて最適化します。
 4. 各話者を【自動音声】【営業担当】【お客様】などの役割ラベルで示してください。
 5. 出力形式は各発話の前に話者ラベルを付け、発話ごとに改行を入れてください。
-6. 自然な会話の流れになるよう整理してください。`
+6. 自然な会話の流れになるよう整理してください。
+7. エンティティ（人物、組織、日付など）の情報を活用して話者の区別や役割の特定に役立ててください。
+8. 検出された具体的なエンティティ（人名、組織名など）を活用して、会話の内容をより正確に理解してください。`
         },
         {
           role: "user",
@@ -1168,7 +1218,13 @@ ${currentMergeResult.text}
 AssemblyAIが検出した話者情報:
 ${JSON.stringify(speakerLabels)}
 
-これらの情報を組み合わせて、会話をより自然で読みやすく整理してください。話者の役割を適切に判断して【自動音声】【営業担当】【お客様】などのラベルを付けてください。内容を変更せず、話者の切り替わりだけを最適化してください。`
+${entitiesText}
+
+これらの情報を組み合わせて、会話をより自然で読みやすく整理してください。話者の役割を適切に判断して【自動音声】【営業担当】【お客様】などのラベルを付けてください。内容を変更せず、話者の切り替わりだけを最適化してください。
+
+検出されたエンティティ情報（特に人物名、組織名、役職など）を活用して、話者の正確な所属や役割を特定してください。例えば、人物名と組織名が関連付けられている場合は、【〇〇会社 △△様】のように詳細なラベルを使用してください。
+
+最後に検出されたエンティティ情報を要約して含めてください。主な人物、組織、日付、時間などを簡潔にまとめてください。`
         }
       ],
       temperature: 0.2,
@@ -1199,7 +1255,7 @@ ${JSON.stringify(speakerLabels)}
     const responseJson = JSON.parse(response.getContentText());
     const enhancedText = responseJson.choices[0].message.content;
 
-    Logger.log('GPT-4.1 miniによる会話洗練処理が完了しました');
+    Logger.log('GPT-4.1 miniによる会話洗練処理が完了しました（最終結果として採用）');
 
     return {
       text: enhancedText,
