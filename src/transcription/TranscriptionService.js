@@ -19,6 +19,7 @@ var TranscriptionService = (function () {
     }
 
     try {
+      Logger.log('文字起こし処理開始: ' + file.getName());
       // GPT-4o-mini-transcribeでの文字起こし
       const openaiTranscriptResult = transcribeWithGPT4oMini(file, openaiApiKey);
       Logger.log('GPT-4o-mini 文字起こし完了');
@@ -78,7 +79,8 @@ var TranscriptionService = (function () {
         return simpleResult;
       }
     } catch (error) {
-      throw new Error('文字起こし処理中にエラー: ' + error.toString());
+      Logger.log('文字起こし処理中にエラー: ' + error.toString());
+      throw error;
     }
   }
 
@@ -240,18 +242,39 @@ var TranscriptionService = (function () {
       const uploadResponseJson = JSON.parse(uploadResponse.getContentText());
       const audioUrl = uploadResponseJson.upload_url;
 
-      // 文字起こしリクエストを送信（最新APIに合わせた形式）
+      // 言語に応じた最適なオプションを設定
+      let transcriptPayload = {
+        audio_url: audioUrl,
+        language_code: 'ja',
+        speaker_labels: true,
+        entity_detection: true  // エンティティ検出を有効化
+      };
+
+      // 言語に応じた機能の設定
+      if (transcriptPayload.language_code === 'ja') {
+        // 日本語では以下の機能が利用できないため除外
+        // - 感情分析 (sentiment_analysis)
+        // - 自動チャプター (auto_chapters)
+        // - 自動ハイライト (auto_highlights)
+
+        // SLAM-1モデルは日本語でも対応しているため設定
+        transcriptPayload.language_model = 'assemblyai/slam-1';
+      } else {
+        // 英語など他の言語では高度な機能を有効化
+        transcriptPayload.auto_chapters = true;
+        transcriptPayload.sentiment_analysis = true;
+        transcriptPayload.auto_highlights = true;
+        transcriptPayload.language_model = 'assemblyai/slam-1';
+      }
+
+      // 文字起こしリクエストを送信
       const transcriptOptions = {
         method: 'post',
         headers: {
           'Authorization': apiKey,
           'Content-Type': 'application/json'
         },
-        payload: JSON.stringify({
-          audio_url: audioUrl,
-          language_code: 'ja',
-          speaker_labels: true  // この形式で話者分離を有効化
-        }),
+        payload: JSON.stringify(transcriptPayload),
         muteHttpExceptions: true
       };
 
@@ -346,9 +369,25 @@ var TranscriptionService = (function () {
       const speakerCount = getSpeakerCount(pollingResponseJson.utterances || []);
       Logger.log('AssemblyAI処理完了: 話者数=' + speakerCount + ', 発話数=' + utteranceCount);
 
+      // エンティティ検出結果をログに記録
+      if (pollingResponseJson.entities) {
+        Logger.log('エンティティ検出結果: ' + JSON.stringify(pollingResponseJson.entities));
+      }
+
+      // 詳細なエンティティ情報があれば記録
+      let entitiesOriginal = [];
+      if (pollingResponseJson.results &&
+        pollingResponseJson.results.entities &&
+        Array.isArray(pollingResponseJson.results.entities)) {
+        entitiesOriginal = pollingResponseJson.results.entities;
+        Logger.log('詳細なエンティティ情報: ' + JSON.stringify(entitiesOriginal).substring(0, 500) + '...');
+      }
+
       return {
         text: pollingResponseJson.text || '',
         utterances: pollingResponseJson.utterances || [],
+        entities: pollingResponseJson.entities || {},  // エンティティ情報を追加
+        entities_original: entitiesOriginal,           // 詳細なエンティティ情報を追加
         fileName: fileName
       };
 
@@ -394,65 +433,10 @@ var TranscriptionService = (function () {
         return textBasedMerge(openaiTranscriptResult, assemblyAIResult);
       }
 
-      // セグメント情報を確認
-      const segments = openaiTranscriptResult.segments || [];
-
-      // まずセグメント情報があればセグメントベースでマージ
-      if (segments && segments.length > 0) {
-        // 各タイムスタンプ区間ごとに話者情報を割り当て
-        const speakerMap = createSpeakerTimeMap(utterances);
-        const speakerRoles = InformationExtractor.identifySpeakerRoles(utterances);
-
-        // 話者情報を付与したテキストを生成
-        let mergedText = '';
-        let currentSpeaker = null;
-        let currentSegments = [];
-
-        // セグメントごとに話者を判定してマージ
-        for (let i = 0; i < segments.length; i++) {
-          const segment = segments[i];
-          const startTime = segment.start;
-
-          // この時間帯の話者を特定
-          const speaker = findSpeakerAtTime(speakerMap, startTime);
-
-          // 話者が変わったら出力
-          if (speaker !== currentSpeaker) {
-            // 前の話者のテキストを出力
-            if (currentSpeaker !== null && currentSegments.length > 0) {
-              const speakerLabel = formatSpeakerLabel(currentSpeaker, speakerRoles);
-              const text = currentSegments.join(' ');
-              mergedText += speakerLabel + ' ' + text + '\n\n';
-            }
-
-            // 新しい話者のセグメントを開始
-            currentSpeaker = speaker;
-            currentSegments = [segment.text];
-          } else {
-            // 同じ話者の場合は追加
-            currentSegments.push(segment.text);
-          }
-        }
-
-        // 最後の話者のテキストを出力
-        if (currentSpeaker !== null && currentSegments.length > 0) {
-          const speakerLabel = formatSpeakerLabel(currentSpeaker, speakerRoles);
-          const text = currentSegments.join(' ');
-          mergedText += speakerLabel + ' ' + text + '\n\n';
-        }
-
-        // ベースマージ結果として使用
-        var currentMergeResult = {
-          text: mergedText,
-          original: {
-            openai: openaiTranscriptResult,
-            assemblyAI: assemblyAIResult
-          }
-        };
-      } else {
-        // セグメント情報がない場合は文章ベースのマージを行う
-        var currentMergeResult = textBasedMerge(openaiTranscriptResult, assemblyAIResult);
-      }
+      // 現在のマージ結果を取得（下準備として実行）
+      Logger.log('初期マージデータを準備中（下準備）...');
+      const currentMergeResult = textBasedMerge(openaiTranscriptResult, assemblyAIResult);
+      Logger.log('初期マージデータの準備完了、GPT-4.1 miniによる高度な処理を開始...');
 
       // 話者ごとのセリフを抽出
       const speakerRoles = InformationExtractor.identifySpeakerRoles(utterances);
@@ -483,6 +467,59 @@ var TranscriptionService = (function () {
         };
       });
 
+      // エンティティ情報をテキスト形式に変換
+      let entitiesText = '';
+      if (assemblyAIResult.entities && Object.keys(assemblyAIResult.entities).length > 0) {
+        entitiesText = 'エンティティ検出情報:\n';
+
+        // エンティティの種類と日本語名のマッピング
+        const entityTypeMap = {
+          'person_name': '人物名',
+          'location': '場所',
+          'organization': '組織',
+          'date': '日付',
+          'time': '時間',
+          'money': '金額',
+          'percent': 'パーセント',
+          'event': 'イベント',
+          'product': '製品',
+          'phone_number': '電話番号',
+          'email_address': 'メールアドレス',
+          'url': 'URL',
+          'age': '年齢',
+          'occupation': '職業',
+          'date_interval': '期間'
+        };
+
+        // タイプごとのエンティティカウントを表示
+        for (const [type, count] of Object.entries(assemblyAIResult.entities)) {
+          const typeJa = entityTypeMap[type] || type;
+          entitiesText += `${typeJa}: ${count}件\n`;
+        }
+
+        // 詳細なエンティティ情報があれば追加
+        if (Array.isArray(assemblyAIResult.entities_original)) {
+          const entityDetails = {};
+
+          // エンティティをタイプごとにグループ化
+          assemblyAIResult.entities_original.forEach(entity => {
+            const type = entity.entity_type;
+            const typeJa = entityTypeMap[type] || type;
+
+            if (!entityDetails[typeJa]) {
+              entityDetails[typeJa] = new Set();
+            }
+            entityDetails[typeJa].add(entity.text);
+          });
+
+          // グループ化したエンティティを表示
+          entitiesText += '\n詳細なエンティティ情報:\n';
+          for (const [typeJa, values] of Object.entries(entityDetails)) {
+            entitiesText += `${typeJa}: ${Array.from(values).join('、')}\n`;
+          }
+        }
+      }
+
       // GPT-4.1 miniに送るプロンプトを作成
       const prompt = {
         model: "gpt-4.1-mini",
@@ -499,15 +536,34 @@ var TranscriptionService = (function () {
 5. 不自然な文の区切りや誤った話者の切り替わりを特定する
 
 【行動ステップ】
-1. 各発言に適切な話者ラベルを付ける（【自動音声】【営業担当】【お客様】など）
+1. 各発言に適切な話者ラベルを付ける【会社・団体名 部署名 担当者名】または【会社・団体名 担当者名】の形式で
 2. 同じ話者の意味が繋がる発言は適切にまとめる
 3. 文脈から明らかに話者が切り替わる箇所では、話者を正しく分離する
 4. 自然な会話の流れになるよう発言をグループ化する
 5. 最後に、整理された会話全体を出力
 
+【営業会社の候補リスト】
+以下は営業会社の候補リストです。話者が営業側と判断される場合は、このリストから適切な会社名を選んでください：
+・株式会社ENERALL（エネラル）
+・エムスリーヘルスデザイン株式会社（エムスリーヘルスデザイン）
+・株式会社TOKIUM
+・株式会社グッドワークス
+・テコム看護
+・ハローワールド株式会社
+・株式会社ワーサル
+・株式会社NOTCH（ノッチ）
+・株式会社ジースタイラス
+・株式会社佑人社（ゆうじんしゃ）
+・株式会社リディラバ
+・株式会社インフィニットマインド
+
 【重要ルール】
-- AssemblyAIで文字起こしした結果が正しいとは限りません。
-- 飛躍した推論は避ける必要があるものの、論理的に導かれる話者の分離や文章の整形は行なって下さい。
+- 話者ラベルは【会社・団体名 部署名 担当者名】または【会社・団体名 担当者名】の形式で記載する
+- 話者の中で営業側と顧客側を明確に区別する
+- 営業側は上記リストの会社から選び、顧客側は会話から判断して適切な会社・団体名を記載する
+- 会社名と担当者名は会話内容から抽出すること
+- AssemblyAIで文字起こしした結果が正しいとは限らないことに注意
+- 飛躍した推論は避ける必要があるものの、論理的に導かれる話者の分離や文章の整形は行なって下さい
 - 各発話の前に話者ラベルを付け、発話ごとに適切に改行してください
 - 最終的な出力は読みやすく、自然な対話形式にしてください`
           },
@@ -522,14 +578,27 @@ ${currentMergeResult.text}
 AssemblyAIが検出した話者情報:
 ${JSON.stringify(speakerLabels, null, 2)}
 
+${entitiesText}
+
 これらの情報を比較分析して、以下のプロセスで会話を整理してください：
 
-1. まず、各発言者の特定：話者の特徴（言葉遣い、自己紹介、発言内容）から誰が話しているか判断
-2. 次に、話者の役割を判断：営業担当者、顧客、受付、自動音声など
-3. 連続した発言のグループ化：同じ話者の発言を自然にまとめる
-4. 最後に、整理された会話全体を出力 (飛躍した推論は避ける必要があるものの、論理的に導かれる話者の分離や文章の整形は行なって下さい。)
+1. まず、各発言者の特定：話者の特徴（言葉遣い、自己紹介、発言内容）から誰が話しているか判断してください
+2. 次に、営業側と顧客側を区別：営業側は営業会社候補リストから選び、顧客側は会話から判断してください
+3. 検出されたエンティティ情報（特に人物名、組織名、役職など）を活用して、話者の正確な所属や役割を特定してください
+4. 連続した発言のグループ化：同じ話者の発言を自然にまとめてください
+5. 最後に、整理された会話全体を出力してください (飛躍した推論は避ける必要があるものの、論理的に導かれる話者の分離や文章の整形は行なって下さい)
 
-発言が切れ目なく繋がるよう注意し、会話の流れを崩さないように整理してください。最終的な出力は自然な対話形式で、各話者の発言が明確に区別できるようにしてください。`
+話者ラベルは【会社・団体名 部署名 担当者名】または【会社・団体名 担当者名】の形式で記載してください。
+営業側は必ず営業会社候補リストから選んでください。顧客側は会話内容から最適な表記を使用してください。
+
+例：
+【株式会社ENERALL 佐藤】 （営業側の例）
+【東京商事 総務企画課 田中様】 （顧客側の例）
+
+発言が切れ目なく繋がるよう注意し、会話の流れを崩さないように整理してください。
+最終的な出力は自然な対話形式で、各話者の発言が明確に区別できるようにしてください。
+
+会話の最後に、検出されたエンティティ情報を要約して含めてください。主な人物、組織、日付、時間などを簡潔にまとめてください。`
           }
         ],
         temperature: 0,
@@ -559,6 +628,8 @@ ${JSON.stringify(speakerLabels, null, 2)}
 
       const responseJson = JSON.parse(response.getContentText());
       const enhancedText = responseJson.choices[0].message.content;
+
+      Logger.log('GPT-4.1 miniによる会話洗練処理が完了しました（最終結果として採用）');
 
       // 最終的なポスト処理を適用
       const finalText = postProcessTranscription(enhancedText);
@@ -833,53 +904,93 @@ ${JSON.stringify(speakerLabels, null, 2)}
   }
 
   /**
-   * 話者情報をタイムスタンプマップに変換
-   * @param {Array} utterances - 発話情報の配列
-   * @return {Array} - 時間ごとの話者マップ
+   * セグメント情報がない場合に、テキストベースでマージする
+   * @param {Object} openaiResult - GPT-4.1 mini Transcribeの結果
+   * @param {Object} assemblyAIResult - AssemblyAIの結果
+   * @return {Object} - マージした結果
    */
-  function createSpeakerTimeMap(utterances) {
-    const speakerMap = [];
+  function textBasedMerge(openaiResult, assemblyAIResult) {
+    // GPT-4.1 miniに渡すための下準備としての処理かどうかを判定
+    const isForGpt41Mini = (new Error().stack || '').includes('enhanceDialogueWithGPT4Mini');
 
-    for (let i = 0; i < utterances.length; i++) {
-      const u = utterances[i];
-      if (u.speaker && u.start && u.end) {
-        speakerMap.push({
-          start: u.start,
-          end: u.end,
-          speaker: u.speaker
-        });
-      }
+    if (isForGpt41Mini) {
+      Logger.log('GPT-4.1 mini用の下準備として初期マージデータを作成中...');
+    } else {
+      Logger.log('テキストベースのマージ処理を実行します...');
     }
 
-    // 開始時間でソート
-    speakerMap.sort((a, b) => a.start - b.start);
-
-    return speakerMap;
-  }
-
-  /**
-   * 特定の時間における話者を見つける
-   * @param {Array} speakerMap - 話者マップ
-   * @param {number} time - 時間（ミリ秒）
-   * @return {string|null} - 話者ID、見つからない場合はnull
-   */
-  function findSpeakerAtTime(speakerMap, time) {
-    for (let i = 0; i < speakerMap.length; i++) {
-      if (time >= speakerMap[i].start && time <= speakerMap[i].end) {
-        return speakerMap[i].speaker;
+    try {
+      // AssemblyAIの結果が空またはエラーの場合はOpenAIの結果のみ返す
+      if (!assemblyAIResult || assemblyAIResult.error) {
+        return {
+          text: formatSimpleText(openaiResult.text),
+          original: {
+            openai: openaiResult,
+            assemblyAI: assemblyAIResult || { error: 'No result' }
+          }
+        };
       }
-    }
 
-    // 近い時間帯の話者を探す（50ms以内）
-    const tolerance = 50;
-    for (let i = 0; i < speakerMap.length; i++) {
-      if (Math.abs(time - speakerMap[i].start) <= tolerance ||
-        Math.abs(time - speakerMap[i].end) <= tolerance) {
-        return speakerMap[i].speaker;
+      // AssemblyAIから話者情報を抽出
+      const utterances = assemblyAIResult.utterances || [];
+
+      // 話者分離情報がない場合は単純にOpenAIの結果を返す
+      if (!utterances || utterances.length === 0) {
+        return {
+          text: formatSimpleText(openaiResult.text),
+          original: {
+            openai: openaiResult,
+            assemblyAI: assemblyAIResult
+          }
+        };
       }
-    }
 
-    return null;
+      // 話者IDを役割に変換
+      const speakerRoles = InformationExtractor.identifySpeakerRoles(utterances);
+      const speakerInfo = InformationExtractor.extractSpeakerInfoFromConversation(utterances);
+
+      // OpenAIのテキストを文ごとに分割
+      const sentences = openaiResult.text.split(/(?<=[。．！？])\s*/);
+
+      // 文章を話者のタイミングに基づいて分割
+      const speakerSegments = splitTextBySpeakerTiming(sentences, utterances);
+
+      // 話者情報を付与したテキストを生成
+      let mergedText = '';
+
+      for (let i = 0; i < speakerSegments.length; i++) {
+        const segment = speakerSegments[i];
+        // 話者IDから役割ラベルを生成
+        const speakerId = segment.speaker;
+        const role = speakerRoles[speakerId];
+        const info = speakerInfo[speakerId] || {};
+
+        // 役割ラベル
+        const roleLabel = role === 'sales' ? '営業担当者' : (role === 'customer' ? 'お客様' : '話者' + speakerId);
+
+        mergedText += `【${roleLabel}】 ${segment.text}\n\n`;
+      }
+
+      return {
+        text: mergedText,
+        original: {
+          openai: openaiResult,
+          assemblyAI: assemblyAIResult
+        }
+      };
+
+    } catch (error) {
+      Logger.log('テキストベースのマージ処理中にエラー: ' + error.toString());
+      // エラー時はOpenAIの結果を簡易フォーマットして返す
+      return {
+        text: formatSimpleText(openaiResult.text),
+        error: error.toString(),
+        original: {
+          openai: openaiResult,
+          assemblyAI: assemblyAIResult
+        }
+      };
+    }
   }
 
   /**
@@ -984,103 +1095,27 @@ ${JSON.stringify(speakerLabels, null, 2)}
     return result;
   }
 
-  /**
-   * セグメント情報がない場合に、テキストベースでマージする
-   * @param {Object} openaiResult - GPT-4.1 mini Transcribeの結果
-   * @param {Object} assemblyAIResult - AssemblyAIの結果
-   * @return {Object} - マージした結果
-   */
-  function textBasedMerge(openaiResult, assemblyAIResult) {
-    Logger.log('テキストベースのマージ処理を実行します...');
-
-    try {
-      // AssemblyAIの結果が空またはエラーの場合はOpenAIの結果のみ返す
-      if (!assemblyAIResult || assemblyAIResult.error) {
-        return {
-          text: formatSimpleText(openaiResult.text),
-          original: {
-            openai: openaiResult,
-            assemblyAI: assemblyAIResult || { error: 'No result' }
-          }
-        };
-      }
-
-      // AssemblyAIから話者情報を抽出
-      const utterances = assemblyAIResult.utterances || [];
-
-      // 話者分離情報がない場合は単純にOpenAIの結果を返す
-      if (!utterances || utterances.length === 0) {
-        return {
-          text: formatSimpleText(openaiResult.text),
-          original: {
-            openai: openaiResult,
-            assemblyAI: assemblyAIResult
-          }
-        };
-      }
-
-      // 話者IDを役割に変換
-      const speakerRoles = InformationExtractor.identifySpeakerRoles(utterances);
-      const speakerInfo = InformationExtractor.extractSpeakerInfoFromConversation(utterances);
-
-      // OpenAIのテキストを文ごとに分割
-      const sentences = openaiResult.text.split(/(?<=[。．！？])\s*/);
-
-      // 文章を話者のタイミングに基づいて分割
-      const speakerSegments = splitTextBySpeakerTiming(sentences, utterances);
-
-      // 話者情報を付与したテキストを生成
-      let mergedText = '';
-
-      for (let i = 0; i < speakerSegments.length; i++) {
-        const segment = speakerSegments[i];
-        // 話者IDから役割ラベルを生成
-        const speakerId = segment.speaker;
-        const role = speakerRoles[speakerId];
-        const info = speakerInfo[speakerId] || {};
-
-        // 役割ラベル
-        const roleLabel = role === 'sales' ? '営業担当者' : (role === 'customer' ? 'お客様' : '話者' + speakerId);
-
-        mergedText += `【${roleLabel}】 ${segment.text}\n\n`;
-      }
-
-      return {
-        text: mergedText,
-        original: {
-          openai: openaiResult,
-          assemblyAI: assemblyAIResult
-        }
-      };
-
-    } catch (error) {
-      Logger.log('テキストベースのマージ処理中にエラー: ' + error.toString());
-      // エラー時はOpenAIの結果を簡易フォーマットして返す
-      return {
-        text: formatSimpleText(openaiResult.text),
-        error: error.toString(),
-        original: {
-          openai: openaiResult,
-          assemblyAI: assemblyAIResult
-        }
-      };
-    }
-  }
-
-  // 公開メソッド
+  // トランスクリプションサービスをエクスポート
   return {
-    transcribe: transcribe,
+    transcribe: function (file, assemblyAiApiKey, openaiApiKey) {
+      try {
+        Logger.log('文字起こし処理開始: ' + file.getName());
+        return transcribe(file, assemblyAiApiKey, openaiApiKey);
+      } catch (error) {
+        Logger.log('文字起こし処理でエラー: ' + error.toString());
+        throw error;
+      }
+    },
     transcribeWithGPT4oMini: transcribeWithGPT4oMini,
     transcribeWithAssemblyAI: transcribeWithAssemblyAI,
     enhanceDialogueWithGPT4Mini: enhanceDialogueWithGPT4Mini,
-    textBasedMerge: textBasedMerge,
+    getSpeakerCount: getSpeakerCount,
     formatSimpleText: formatSimpleText,
+    postProcessTranscription: postProcessTranscription,
     formatSpeakerLabel: formatSpeakerLabel,
     splitTextBySpeakerTiming: splitTextBySpeakerTiming,
-    findSpeakerAtTime: findSpeakerAtTime,
-    createSpeakerTimeMap: createSpeakerTimeMap,
     tryAlternativeAssemblyAIRequest: tryAlternativeAssemblyAIRequest,
     tryAssemblyAIV3Request: tryAssemblyAIV3Request,
-    postProcessTranscription: postProcessTranscription
+    textBasedMerge: textBasedMerge
   };
 })();
