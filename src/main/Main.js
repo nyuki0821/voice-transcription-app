@@ -588,6 +588,13 @@ function recoverInterruptedFiles() {
       }
     }
 
+    // Recordingsシートで既にINTERRUPTEDステータスになっているファイルも復旧対象に追加
+    var recordingsInterruptedFiles = getInterruptedFilesFromSheet();
+    if (recordingsInterruptedFiles && recordingsInterruptedFiles.length > 0) {
+      Logger.log('Recordingsシートから追加の中断ファイル数: ' + recordingsInterruptedFiles.length);
+      interruptedFiles = interruptedFiles.concat(recordingsInterruptedFiles);
+    }
+
     Logger.log('中断された可能性のあるファイル数: ' + interruptedFiles.length);
 
     if (interruptedFiles.length === 0) {
@@ -639,10 +646,10 @@ function recoverInterruptedFiles() {
 
         // 状態を更新
         if (recordId) {
-          // Recordingsシートの文字起こし状態を更新 (INTERRUPTED)
+          // Recordingsシートの文字起こし状態を更新 (PENDING - 再処理対象として)
           updateTranscriptionStatusByRecordId(
             recordId,
-            'INTERRUPTED',
+            'PENDING',
             '',
             Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
           );
@@ -693,6 +700,71 @@ function recoverInterruptedFiles() {
     var errorMessage = '中断ファイル復旧処理でエラーが発生: ' + error.toString();
     Logger.log(errorMessage);
     return errorMessage;
+  }
+}
+
+/**
+ * Recordingsシートからステータスが"INTERRUPTED"のファイルを取得
+ * @return {Array} 中断されたファイルの配列
+ */
+function getInterruptedFilesFromSheet() {
+  try {
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+    if (!spreadsheetId) return [];
+
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName('Recordings');
+
+    if (!sheet) {
+      Logger.log('Recordingsシートが見つかりません');
+      return [];
+    }
+
+    var dataRange = sheet.getDataRange();
+    var values = dataRange.getValues();
+    var interruptedFiles = [];
+    var settings = getSystemSettings();
+    var sourceFolderId = settings.SOURCE_FOLDER_ID;
+
+    // ヘッダー行をスキップして2行目から処理
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      // status_transcription（12列目）をチェック
+      if (row[11] === 'INTERRUPTED') {
+        var recordId = row[0]; // record_idは1列目
+
+        // record_idに対応するファイルを探す
+        var filePattern = `zoom_call_*_${recordId}.mp3`;
+        var files = DriveApp.searchFiles(`title contains "${recordId}" and mimeType contains "audio"`);
+
+        while (files.hasNext()) {
+          var file = files.next();
+          // すでに処理対象フォルダにあるか確認
+          var parents = file.getParents();
+          var isInSourceFolder = false;
+
+          while (parents.hasNext()) {
+            var parent = parents.next();
+            if (parent.getId() === sourceFolderId) {
+              isInSourceFolder = true;
+              break;
+            }
+          }
+
+          // 処理対象フォルダにないファイルだけを追加
+          if (!isInSourceFolder) {
+            interruptedFiles.push(file);
+            Logger.log('INTERRUPTEDステータスのファイルを追加: ' + file.getName());
+            break; // 最初に見つかったファイルのみを使用
+          }
+        }
+      }
+    }
+
+    return interruptedFiles;
+  } catch (e) {
+    Logger.log('中断ファイルの取得でエラー: ' + e.toString());
+    return [];
   }
 }
 
@@ -939,6 +1011,8 @@ function calculateSummaryFromSheet(dateStr) {
     var summary = {
       success: 0,
       error: 0,
+      fetchStatusCounts: {},
+      transcriptionStatusCounts: {},
       details: []
     };
 
@@ -973,27 +1047,54 @@ function calculateSummaryFromSheet(dateStr) {
         Logger.log('日付一致！レコード #' + (i + 1) + ' を処理します');
 
         // ステータスに基づいて成功/エラーをカウント
-        var status = row[9]; // status_fetch
+        var fetchStatus = row[9]; // status_fetch
         var transcStatus = row[11]; // status_transcription
 
-        Logger.log('ステータス: fetch=' + status + ', transcription=' + transcStatus);
+        Logger.log('ステータス: fetch=' + fetchStatus + ', transcription=' + transcStatus);
 
         // PROCESSEDは常に成功としてカウント
-        if (status === 'PROCESSED') {
+        if (fetchStatus === 'PROCESSED') {
           summary.success++;
           Logger.log('成功としてカウント');
-        } else if (status === 'ERROR' || (status && status.indexOf('ERROR') === 0)) {
+        } else if (fetchStatus === 'ERROR' || (fetchStatus && fetchStatus.indexOf('ERROR') === 0)) {
           summary.error++;
           Logger.log('エラーとしてカウント');
+        }
+
+        // status_fetchの集計
+        if (fetchStatus) {
+          if (!summary.fetchStatusCounts[fetchStatus]) {
+            summary.fetchStatusCounts[fetchStatus] = 1;
+          } else {
+            summary.fetchStatusCounts[fetchStatus]++;
+          }
+        }
+
+        // status_transcriptionの集計
+        if (transcStatus) {
+          if (!summary.transcriptionStatusCounts[transcStatus]) {
+            summary.transcriptionStatusCounts[transcStatus] = 1;
+          } else {
+            summary.transcriptionStatusCounts[transcStatus]++;
+          }
         }
       }
     }
 
     Logger.log('集計結果: 成功=' + summary.success + '件, エラー=' + summary.error + '件');
+    Logger.log('取得ステータス別集計: ' + JSON.stringify(summary.fetchStatusCounts));
+    Logger.log('文字起こしステータス別集計: ' + JSON.stringify(summary.transcriptionStatusCounts));
+
     return summary;
   } catch (e) {
     Logger.log('サマリー集計でエラー: ' + e.toString());
-    return { success: 0, error: 0, details: [] };
+    return {
+      success: 0,
+      error: 0,
+      fetchStatusCounts: {},
+      transcriptionStatusCounts: {},
+      details: []
+    };
   }
 }
 
