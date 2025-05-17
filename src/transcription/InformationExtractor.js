@@ -30,8 +30,6 @@ var InformationExtractor = (function () {
         Logger.log('テキストが短すぎるため解析を省略します: ' + text);
         return {
           sales_company: "",
-          sales_person: "", // vlookup関数を使うため常に空文字列
-          customer_company: "", // vlookup関数を使うため常に空文字列
           customer_name: "",
           call_status1: "非コンタクト", // 短すぎる会話は非コンタクトに変更
           call_status2: "",
@@ -50,7 +48,7 @@ var InformationExtractor = (function () {
         // 会話が非常に短い、または中断を示す表現がある場合
 
         // 対話形式の会話かどうかを確認（会話らしいパターンを検出）
-        var hasConversationPattern = /【営業担当】.*【お客様】|【お客様】.*【営業担当】|［営業担当］.*［お客様］|［お客様］.*［営業担当］|\[営業担当\].*\[お客様\]|\[お客様\].*\[営業担当\]|営業担当.*お客様|お客様.*営業担当/.test(text);
+        var hasConversationPattern = /【営業担当者】.*【お客様】|【お客様】.*【営業担当者】|【営業担当】.*【お客様】|【お客様】.*【営業担当】|［営業担当］.*［お客様］|［お客様］.*［営業担当］|\[営業担当\].*\[お客様\]|\[お客様\].*\[営業担当\]|営業担当.*お客様|お客様.*営業担当/.test(text);
 
         // 会話には見えても製品説明がない場合や適切な担当者と話せていない場合は非コンタクト判定
         if (!hasConversationPattern ||
@@ -59,8 +57,6 @@ var InformationExtractor = (function () {
           Logger.log('会話が非常に短い、対話形式ではない、または適切な担当者と話せていないため非コンタクト判定: ' + text);
           return {
             sales_company: "",
-            sales_person: "", // vlookup関数を使うため常に空文字列
-            customer_company: "", // vlookup関数を使うため常に空文字列
             customer_name: "",
             call_status1: "非コンタクト",
             call_status2: "",
@@ -93,7 +89,7 @@ var InformationExtractor = (function () {
         "4. 断り理由やアポイント理由については、その内容と適切なカテゴリを選定する\n" +
         "5. 思考プロセスは含めず、JSONオブジェクトのみを出力する\n\n" +
         "【JSON形式】\n" +
-        "{\"sales_company\":\"\", \"sales_person\":\"\", \"customer_company\":\"\", \"customer_name\":\"\", " +
+        "{\"sales_company\":\"\", \"customer_name\":\"\", " +
         "\"call_status1\":\"\", \"call_status2\":\"\", \"reason_for_refusal\":\"\", \"reason_for_refusal_category\":\"\", " +
         "\"reason_for_appointment\":\"\", \"reason_for_appointment_category\":\"\", \"summary\":\"\"}\n\n" +
         "【sales_companyの候補リスト】\n" +
@@ -148,10 +144,10 @@ var InformationExtractor = (function () {
 
       // ユーザープロンプト（思考プロセスを促す）
       var userPrompt = "以下の営業電話の会話から重要な情報を抽出してください。\n\n" +
-        "1. まず営業担当者と顧客を特定し、それぞれの会社名と名前を見つけてください\n" +
+        "1. まず営業担当者と顧客を特定し、営業会社名と顧客の名前を見つけてください\n" +
         "2. 次に会話の結果を2段階で判定してください：\n" +
         "   a) call_status1: 担当者と製品・サービスの説明ができたか（コンタクト/非コンタクト）\n" +
-        "   b) call_status2: コンタクトの場合の成果（アポイント/断り/継続）\n" +
+        "   b) call_status2: call_status1に関わらず会話の成果（アポイント/断り/継続 (資料送付)/継続 (時期を改める)/継続 (その他)）\n" +
         "3. 断りの場合はその理由とカテゴリ、アポイントの場合はその理由とカテゴリを特定してください\n" +
         "4. 最後に会話の要点を簡潔にまとめてください\n\n" +
         "会話内容：\n\n" + text;
@@ -208,8 +204,6 @@ var InformationExtractor = (function () {
         // JSONパースに失敗した場合の最低限の情報
         extractedInfo = {
           sales_company: "",
-          sales_person: "", // vlookup関数を使うため常に空文字列
-          customer_company: "", // vlookup関数を使うため常に空文字列
           customer_name: "",
           call_status1: "不明",
           call_status2: "",
@@ -224,8 +218,6 @@ var InformationExtractor = (function () {
       // 抽出されたデータの検証とデフォルト値の設定
       var validatedInfo = {
         sales_company: validateSalesCompany(extractedInfo.sales_company) || "",
-        sales_person: "", // vlookup関数を使うため常に空文字列
-        customer_company: "", // vlookup関数を使うため常に空文字列
         customer_name: extractedInfo.customer_name || "",
         call_status1: validateCallStatus1(extractedInfo.call_status1) || "不明",
         call_status2: validateCallStatus2(extractedInfo.call_status2, extractedInfo.call_status1) || "",
@@ -290,12 +282,6 @@ var InformationExtractor = (function () {
           !text.includes('リディラバ') &&
           !text.includes('インフィニットマインド')) {
           cleanInfo.sales_company = "";
-          suspiciousInfo = true;
-        }
-
-        // 会話に含まれない担当者名が抽出されていないか確認
-        if (cleanInfo.sales_person && text.indexOf(cleanInfo.sales_person) === -1) {
-          cleanInfo.sales_person = "";
           suspiciousInfo = true;
         }
 
@@ -1007,8 +993,6 @@ var InformationExtractor = (function () {
     // 不自然な単語や表現を修正
     var cleanInfo = {
       sales_company: cleanText(info.sales_company),
-      sales_person: "", // vlookup関数を使うため常に空文字列を返す
-      customer_company: "", // vlookup関数を使うため常に空文字列を返す
       customer_name: cleanText(info.customer_name),
       call_status1: info.call_status1,
       call_status2: info.call_status2,
