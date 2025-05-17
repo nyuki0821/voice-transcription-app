@@ -9,7 +9,7 @@
 ## 処理の流れ
 
 1. **録音ファイル情報の収集**
-   - Zoomphoneで通話録音が完了すると、自動的に録音ファイルの情報が[Recordingsシート](https://docs.google.com/spreadsheets/d/16wE2ebRsRSXDk0BHXawfziKsp3JDiKueTKOuWvGgJxo/edit?usp=sharing)に記録されます
+   - Zoomphoneで通話録音が完了すると、自動的に録音ファイルの情報がRecordingsシートに記録されます
    - この段階では、まだファイル本体は取得されておらず、メタデータ（録音ID、URL、タイムスタンプなど）のみが記録されます
 
 2. **録音ファイルの取得**
@@ -21,7 +21,7 @@
    - 平日・土日祝日問わず6:00～24:00の間、10分ごとに自動実行
    - 未処理フォルダにあるファイルを最大10ファイルまで処理（古いファイル順）
    - 文字起こしが完了すると、Recordingsシートの`status_transcription`カラムが`SUCCESS`に更新
-   - 文字起こし結果は[call_recordsシート](https://docs.google.com/spreadsheets/d/13bbjPbyd0rOTshrsbWJA_dkbu1BXo-A_gY5_O4NP03o/edit?usp=sharing)に保存されます
+   - 文字起こし結果はcall_recordsシートに保存されます
 
 4. **夜間バッチ処理**
    - 24:00～6:00の間に録音されたファイルは、翌朝6:15に一括処理されます
