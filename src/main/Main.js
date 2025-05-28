@@ -109,57 +109,97 @@ function extractMetadataFromFile(fileName) {
       // ファイルの説明からJSONメタデータを解析
       if (fileDescription && fileDescription.trim()) {
         try {
-          var metadata = JSON.parse(fileDescription);
+          // [RETRIED]や[RESET_RETRY]などのマークがある場合、JSON部分のみを抽出
+          var jsonPart = fileDescription;
+          var markerIndex = fileDescription.indexOf("[");
+
+          if (markerIndex > 0) {
+            // マーカーの前のJSONパートのみを使用
+            jsonPart = fileDescription.substring(0, markerIndex).trim();
+            Logger.log('マーカーを除去したJSONパート: ' + jsonPart);
+          } else if (markerIndex === 0) {
+            // 先頭からマーカーが始まる場合はJSONが見つからない
+            throw new Error("JSON部分が見つかりません: " + fileDescription);
+          }
+
+          var metadata = JSON.parse(jsonPart);
           Logger.log('ファイルからメタデータを読み込みました: ' + JSON.stringify(metadata));
 
           // メタデータから録音IDを取得
           if (metadata.recording_id) {
             result.recordId = metadata.recording_id;
             result.metadataFound = true;
+
+            // ここで重要: record_idが取得できたら、まずRecordingsシートからメタデータを取得
+            var sheetMetadata = getMetadataFromRecordingsSheet(result.recordId);
+            if (sheetMetadata) {
+              Logger.log('Recordingsシートからメタデータを取得: ' + JSON.stringify(sheetMetadata));
+
+              // Recordingsシートから取得した情報を優先的に使用
+              if (sheetMetadata.callDate) {
+                result.callDate = sheetMetadata.callDate;
+              }
+
+              if (sheetMetadata.callTime) {
+                result.callTime = sheetMetadata.callTime;
+              }
+
+              if (sheetMetadata.salesPhoneNumber) {
+                result.salesPhoneNumber = sheetMetadata.salesPhoneNumber;
+              }
+
+              if (sheetMetadata.customerPhoneNumber) {
+                result.customerPhoneNumber = sheetMetadata.customerPhoneNumber;
+              }
+
+              // 必要な情報がすべて揃っている場合は、他のソースからの抽出をスキップ
+              if (result.callDate && result.callTime &&
+                result.salesPhoneNumber && result.customerPhoneNumber) {
+                Logger.log('Recordingsシートから必要な情報をすべて取得しました。JSONメタデータからの抽出をスキップします。');
+                return result;
+              }
+
+              // 一部の情報だけが取得できた場合は、残りをJSONメタデータから補完
+              Logger.log('Recordingsシートから一部の情報を取得しました。残りの情報をJSONメタデータから補完します。');
+            }
           }
 
-          // 開始時間から日付と時間を抽出
-          if (metadata.start_time) {
+          // Recordingsシートから取得できなかった情報をJSONメタデータから補完
+          // 開始時間から日付と時間を抽出（Recordingsシートの情報がない場合のみ）
+          if ((!result.callDate || !result.callTime) && metadata.start_time) {
             var startTime = new Date(metadata.start_time);
             // タイムゾーン考慮してフォーマット
-            result.callDate = Utilities.formatDate(startTime, 'Asia/Tokyo', 'yyyy-MM-dd');
-            result.callTime = Utilities.formatDate(startTime, 'Asia/Tokyo', 'HH:mm:ss');
+            if (!result.callDate) {
+              result.callDate = Utilities.formatDate(startTime, 'Asia/Tokyo', 'yyyy-MM-dd');
+            }
+            if (!result.callTime) {
+              result.callTime = Utilities.formatDate(startTime, 'Asia/Tokyo', 'HH:mm:ss');
+            }
             result.metadataFound = true;
           }
 
-          // 電話番号情報を取得
-          // 通話方向の確認
-          var direction = metadata.call_direction || 'unknown';
+          // 電話番号情報を取得（Recordingsシートの情報がない場合のみ）
+          if (!result.salesPhoneNumber || !result.customerPhoneNumber) {
+            // 通話方向の確認
+            var direction = metadata.call_direction || 'unknown';
 
-          // 発信者番号（セールスの電話番号）
-          if (direction === 'outbound') {
-            // 発信コール：発信者は営業
-            result.salesPhoneNumber = metadata.caller_number || '';
-            result.customerPhoneNumber = metadata.called_number || '';
-          } else if (direction === 'inbound') {
-            // 着信コール：着信者は営業
-            result.customerPhoneNumber = metadata.caller_number || '';
-            result.salesPhoneNumber = metadata.called_number || '';
-          } else {
-            // 通話方向不明の場合は両方の番号を取得してみる
-            if (metadata.caller_number) {
-              result.salesPhoneNumber = metadata.caller_number;
-            }
+            // 発信者番号（セールスの電話番号）
+            if (direction === 'outbound') {
+              // 発信コール：発信者は営業
+              if (!result.salesPhoneNumber) result.salesPhoneNumber = metadata.caller_number || '';
+              if (!result.customerPhoneNumber) result.customerPhoneNumber = metadata.called_number || '';
+            } else if (direction === 'inbound') {
+              // 着信コール：着信者は営業
+              if (!result.customerPhoneNumber) result.customerPhoneNumber = metadata.caller_number || '';
+              if (!result.salesPhoneNumber) result.salesPhoneNumber = metadata.called_number || '';
+            } else {
+              // 通話方向不明の場合は両方の番号を取得してみる
+              if (!result.salesPhoneNumber && metadata.caller_number) {
+                result.salesPhoneNumber = metadata.caller_number;
+              }
 
-            if (metadata.called_number) {
-              result.customerPhoneNumber = metadata.called_number;
-            }
-
-            // Recordingsシートから電話番号情報を補完
-            if (result.recordId && (!result.customerPhoneNumber || !result.salesPhoneNumber)) {
-              var phoneNumbers = getPhoneNumbersFromRecordingsSheet(result.recordId);
-              if (phoneNumbers) {
-                if (!result.salesPhoneNumber && phoneNumbers.salesPhoneNumber) {
-                  result.salesPhoneNumber = phoneNumbers.salesPhoneNumber;
-                }
-                if (!result.customerPhoneNumber && phoneNumbers.customerPhoneNumber) {
-                  result.customerPhoneNumber = phoneNumbers.customerPhoneNumber;
-                }
+              if (!result.customerPhoneNumber && metadata.called_number) {
+                result.customerPhoneNumber = metadata.called_number;
               }
             }
           }
@@ -174,18 +214,144 @@ function extractMetadataFromFile(fileName) {
             Logger.log('顧客電話番号変換後: そのまま使用 → ' + result.customerPhoneNumber);
           }
 
-          Logger.log('ファイルメタデータから抽出: record_id=' + result.recordId
+          Logger.log('メタデータ抽出結果: record_id=' + result.recordId
             + ', call_date=' + result.callDate
             + ', call_time=' + result.callTime
             + ', sales_phone=' + result.salesPhoneNumber
             + ', customer_phone=' + result.customerPhoneNumber);
         } catch (jsonError) {
           Logger.log('メタデータのJSONパース失敗: ' + jsonError.toString());
+
+          // JSONパース失敗時はファイル名からレコードIDの抽出を試みる
+          var fileNameMatch = fileName.match(/zoom_call_(\d+)_([a-f0-9]+)\.mp3/i);
+          if (fileNameMatch) {
+            // タイムスタンプとレコードIDを抽出
+            var timestamp = fileNameMatch[1];
+            var recordId = fileNameMatch[2];
+
+            if (recordId) {
+              result.recordId = recordId;
+              Logger.log('ファイル名からrecord_idを抽出: ' + recordId);
+
+              // Recordingsシートからメタデータを取得
+              var sheetMetadata = getMetadataFromRecordingsSheet(recordId);
+              if (sheetMetadata) {
+                Logger.log('Recordingsシートからメタデータを取得: ' + JSON.stringify(sheetMetadata));
+
+                // Recordingsシートから取得した情報を優先的に使用
+                if (sheetMetadata.callDate) result.callDate = sheetMetadata.callDate;
+                if (sheetMetadata.callTime) result.callTime = sheetMetadata.callTime;
+                if (sheetMetadata.salesPhoneNumber) result.salesPhoneNumber = sheetMetadata.salesPhoneNumber;
+                if (sheetMetadata.customerPhoneNumber) result.customerPhoneNumber = sheetMetadata.customerPhoneNumber;
+
+                // もし日付と時間が取得できた場合は、タイムスタンプからの抽出をスキップ
+                if (result.callDate && result.callTime) {
+                  Logger.log('Recordingsシートから日付と時間を取得しました。タイムスタンプからの抽出をスキップします。');
+                  return result;
+                }
+              }
+
+              // 日付と時間がRecordingsシートから取得できなかった場合のみタイムスタンプから抽出
+              if ((!result.callDate || !result.callTime) && timestamp && timestamp.length >= 14) {
+                // YYYYMMDDhhmmss 形式を解析
+                var year = timestamp.substring(0, 4);
+                var month = timestamp.substring(4, 6);
+                var day = timestamp.substring(6, 8);
+                var hour = timestamp.substring(8, 10);
+                var minute = timestamp.substring(10, 12);
+                var second = timestamp.substring(12, 14);
+
+                var dateStr = year + '-' + month + '-' + day;
+                var timeStr = hour + ':' + minute + ':' + second;
+
+                if (!result.callDate) result.callDate = dateStr;
+                if (!result.callTime) result.callTime = timeStr;
+
+                Logger.log('ファイル名からタイムスタンプを抽出: ' + dateStr + ' ' + timeStr);
+              }
+            }
+          }
+        }
+      } else {
+        // description が空の場合もファイル名からの抽出を試みる
+        var fileNameMatch = fileName.match(/zoom_call_(\d+)_([a-f0-9]+)\.mp3/i);
+        if (fileNameMatch && fileNameMatch[2]) {
+          result.recordId = fileNameMatch[2];
+          Logger.log('ファイル名から直接record_idを抽出: ' + result.recordId);
+
+          // Recordingsシートからメタデータを取得
+          var sheetMetadata = getMetadataFromRecordingsSheet(result.recordId);
+          if (sheetMetadata) {
+            Logger.log('Recordingsシートからメタデータを取得: ' + JSON.stringify(sheetMetadata));
+
+            // Recordingsシートから取得した情報を設定
+            if (sheetMetadata.callDate) result.callDate = sheetMetadata.callDate;
+            if (sheetMetadata.callTime) result.callTime = sheetMetadata.callTime;
+            if (sheetMetadata.salesPhoneNumber) result.salesPhoneNumber = sheetMetadata.salesPhoneNumber;
+            if (sheetMetadata.customerPhoneNumber) result.customerPhoneNumber = sheetMetadata.customerPhoneNumber;
+
+            // タイムスタンプからの抽出が必要かチェック
+            if (!result.callDate || !result.callTime) {
+              var timestamp = fileNameMatch[1];
+              if (timestamp && timestamp.length >= 14) {
+                var year = timestamp.substring(0, 4);
+                var month = timestamp.substring(4, 6);
+                var day = timestamp.substring(6, 8);
+                var hour = timestamp.substring(8, 10);
+                var minute = timestamp.substring(10, 12);
+                var second = timestamp.substring(12, 14);
+
+                if (!result.callDate) result.callDate = year + '-' + month + '-' + day;
+                if (!result.callTime) result.callTime = hour + ':' + minute + ':' + second;
+
+                Logger.log('ファイル名からタイムスタンプを補完: ' + result.callDate + ' ' + result.callTime);
+              }
+            }
+          } else {
+            // Recordingsシートからデータが取得できない場合はファイル名のタイムスタンプから抽出
+            var timestamp = fileNameMatch[1];
+            if (timestamp && timestamp.length >= 14) {
+              var year = timestamp.substring(0, 4);
+              var month = timestamp.substring(4, 6);
+              var day = timestamp.substring(6, 8);
+              var hour = timestamp.substring(8, 10);
+              var minute = timestamp.substring(10, 12);
+              var second = timestamp.substring(12, 14);
+
+              result.callDate = year + '-' + month + '-' + day;
+              result.callTime = hour + ':' + minute + ':' + second;
+
+              Logger.log('ファイル名から日付と時間を抽出: ' + result.callDate + ' ' + result.callTime);
+            }
+          }
         }
       }
     }
   } catch (fileError) {
     Logger.log('ファイルメタデータ取得エラー: ' + fileError.toString());
+
+    // 最終手段としてファイル名からの抽出を試みる
+    try {
+      var fileNameMatch = fileName.match(/zoom_call_(\d+)_([a-f0-9]+)\.mp3/i);
+      if (fileNameMatch && fileNameMatch[2]) {
+        result.recordId = fileNameMatch[2];
+        Logger.log('エラー後のファイル名からの直接抽出: record_id=' + result.recordId);
+
+        // Recordingsシートからメタデータを取得試行
+        var sheetMetadata = getMetadataFromRecordingsSheet(result.recordId);
+        if (sheetMetadata) {
+          Logger.log('エラー後にRecordingsシートからメタデータを取得: ' + JSON.stringify(sheetMetadata));
+
+          // Recordingsシートから取得した情報を設定
+          if (sheetMetadata.callDate) result.callDate = sheetMetadata.callDate;
+          if (sheetMetadata.callTime) result.callTime = sheetMetadata.callTime;
+          if (sheetMetadata.salesPhoneNumber) result.salesPhoneNumber = sheetMetadata.salesPhoneNumber;
+          if (sheetMetadata.customerPhoneNumber) result.customerPhoneNumber = sheetMetadata.customerPhoneNumber;
+        }
+      }
+    } catch (e) {
+      Logger.log('ファイル名からのID抽出も失敗: ' + e.toString());
+    }
   }
 
   return result;
@@ -228,6 +394,71 @@ function getPhoneNumbersFromRecordingsSheet(recordId) {
     return null;
   } catch (e) {
     Logger.log('Recordingsシートからの電話番号取得でエラー: ' + e.toString());
+    return null;
+  }
+}
+
+/**
+ * Recordingsシートから録音IDに一致するメタデータを取得する
+ * 電話番号に加えて、日付と時間も取得
+ * @param {string} recordId - 録音ID
+ * @return {Object|null} メタデータ {callDate, callTime, salesPhoneNumber, customerPhoneNumber} または null
+ */
+function getMetadataFromRecordingsSheet(recordId) {
+  try {
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+    if (!spreadsheetId) return null;
+
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName('Recordings');
+
+    if (!sheet) {
+      Logger.log('Recordingsシートが見つかりません');
+      return null;
+    }
+
+    var dataRange = sheet.getDataRange();
+    var values = dataRange.getValues();
+
+    // ヘッダー行をスキップして2行目から処理
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      // record_idカラム（1列目）をチェック
+      if (row[0] === recordId) {
+        // 日付データを適切なフォーマットに変換
+        var callDate = '';
+        if (row[3]) { // call_date（4列目）
+          if (row[3] instanceof Date) {
+            callDate = Utilities.formatDate(row[3], 'Asia/Tokyo', 'yyyy-MM-dd');
+          } else if (typeof row[3] === 'string') {
+            callDate = row[3];
+          }
+        }
+
+        // 時間データを適切なフォーマットに変換
+        var callTime = '';
+        if (row[4]) { // call_time（5列目）
+          if (row[4] instanceof Date) {
+            callTime = Utilities.formatDate(row[4], 'Asia/Tokyo', 'HH:mm:ss');
+          } else if (typeof row[4] === 'string') {
+            callTime = row[4];
+          }
+        }
+
+        // 結果を返す
+        return {
+          callDate: callDate,
+          callTime: callTime,
+          salesPhoneNumber: row[6] || '', // sales_phone_number（7列目）
+          customerPhoneNumber: row[7] || '' // customer_phone_number（8列目）
+        };
+      }
+    }
+
+    Logger.log('録音ID ' + recordId + ' に一致する行がRecordingsシートに見つかりません');
+    return null;
+  } catch (e) {
+    Logger.log('Recordingsシートからのメタデータ取得でエラー: ' + e.toString());
     return null;
   }
 }
@@ -376,56 +607,95 @@ function processBatch() {
 
         // 文字起こし処理
         var transcriptionResult;
+        var hasTranscriptionError = false;
+        var transcriptionErrorMessage = '';
+
         try {
           transcriptionResult = TranscriptionService.transcribe(
             file,
             localSettings.ASSEMBLYAI_API_KEY,
             localSettings.OPENAI_API_KEY
           );
+
+          // 文字起こし結果にエラーフィールドがある場合をチェック
+          if (transcriptionResult && transcriptionResult.error) {
+            hasTranscriptionError = true;
+            transcriptionErrorMessage = transcriptionResult.error;
+            Logger.log('文字起こし結果にエラーが含まれています: ' + transcriptionErrorMessage);
+          }
+
+          // OpenAI APIエラーの検知（文字起こしテキストにエラーメッセージが含まれている場合）
+          if (transcriptionResult && transcriptionResult.text &&
+            (transcriptionResult.text.includes('【文字起こし失敗:') ||
+              transcriptionResult.text.includes('GPT-4o-mini API呼び出しエラー') ||
+              transcriptionResult.text.includes('OpenAI APIからのレスポンスエラー') ||
+              transcriptionResult.text.includes('insufficient_quota'))) {
+            hasTranscriptionError = true;
+            transcriptionErrorMessage = 'OpenAI API処理でエラーが発生しました';
+            Logger.log('文字起こしテキストにエラーメッセージが検出されました');
+          }
+
         } catch (transcriptionError) {
           Logger.log('文字起こし処理でエラーが発生: ' + transcriptionError.toString());
+          hasTranscriptionError = true;
+          transcriptionErrorMessage = transcriptionError.toString();
 
-          // 最低限の結果を生成して処理を続行
+          // 最低限の結果を生成
           transcriptionResult = {
             text: '【文字起こし失敗: ' + transcriptionError.toString() + '】',
             rawText: '',
             utterances: [],
             speakerInfo: {},
             speakerRoles: {},
-            fileName: file.getName()
+            fileName: file.getName(),
+            error: transcriptionError.toString()
           };
         }
 
         // 文字起こし結果のチェック
         Logger.log('文字起こし結果: 文字数=' + (transcriptionResult.text ? transcriptionResult.text.length : 0));
         Logger.log('発話数: ' + (transcriptionResult.utterances ? transcriptionResult.utterances.length : 0));
+        Logger.log('エラー状態: ' + hasTranscriptionError);
+
+        // エラーが発生している場合は早期にエラー処理へ
+        if (hasTranscriptionError) {
+          throw new Error('文字起こし処理でエラーが発生: ' + transcriptionErrorMessage);
+        }
 
         // OpenAI GPT-4o-miniによる情報抽出
         var extractedInfo;
+        var hasExtractionError = false;
+        var extractionErrorMessage = '';
 
         if (!localSettings.OPENAI_API_KEY) {
-          throw new Error('OpenAI APIキーが設定されていないため、処理を続行できません');
+          hasExtractionError = true;
+          extractionErrorMessage = 'OpenAI APIキーが設定されていません';
+          Logger.log('OpenAI APIキーが設定されていないため、情報抽出をスキップします');
+        } else {
+          try {
+            extractedInfo = InformationExtractor.extract(
+              transcriptionResult.text,
+              transcriptionResult.utterances,
+              localSettings.OPENAI_API_KEY
+            );
+            Logger.log('情報抽出完了');
+          } catch (extractionError) {
+            Logger.log('情報抽出でエラーが発生: ' + extractionError.toString());
+            hasExtractionError = true;
+            extractionErrorMessage = extractionError.toString();
+
+            // OpenAI APIクォータエラーの特別処理
+            if (extractionError.toString().includes('insufficient_quota') ||
+              extractionError.toString().includes('429')) {
+              extractionErrorMessage = 'OpenAI APIクォータ制限に達しました';
+              Logger.log('OpenAI APIクォータエラーを検出しました');
+            }
+          }
         }
 
-        try {
-          extractedInfo = InformationExtractor.extract(
-            transcriptionResult.text,
-            transcriptionResult.utterances,
-            localSettings.OPENAI_API_KEY
-          );
-        } catch (extractionError) {
-          Logger.log('情報抽出処理でエラーが発生: ' + extractionError.toString());
-
-          // 最低限の情報を生成して処理を続行
-          extractedInfo = {
-            sales_company: '不明（抽出エラー）',
-            customer_name: '不明（抽出エラー）',
-            call_status1: '',
-            call_status2: '',
-            reason_for_refusal: '',
-            reason_for_appointment: '',
-            summary: '情報抽出に失敗しました: ' + extractionError.toString()
-          };
+        // 情報抽出エラーの場合もエラーとして扱う
+        if (hasExtractionError) {
+          throw new Error('情報抽出処理でエラーが発生: ' + extractionErrorMessage);
         }
 
         // 抽出情報のチェック
@@ -443,9 +713,67 @@ function processBatch() {
         // ファイルからメタデータを抽出
         var metadata = extractMetadataFromFile(file.getName());
 
-        // 必要なメタデータが取得できなかった場合はエラー扱い
+        // 必要なメタデータが取得できなかった場合はファイル名から直接抽出を試みる
         if (!metadata.recordId) {
-          throw new Error('メタデータから録音IDを取得できませんでした: ' + file.getName());
+          // ファイル名からrecordIdを直接抽出（例：zoom_call_20250519015737_96f847c2df6f46b684b046f2046efc8d.mp3）
+          var fileNameMatch = file.getName().match(/zoom_call_\d+_([a-f0-9]+)\.mp3/i);
+          if (fileNameMatch && fileNameMatch[1]) {
+            metadata.recordId = fileNameMatch[1];
+            Logger.log('メタデータ抽出失敗後、ファイル名から直接record_idを抽出: ' + metadata.recordId);
+
+            // Recordingsシートから電話番号情報を補完
+            var phoneNumbers = getPhoneNumbersFromRecordingsSheet(metadata.recordId);
+            if (phoneNumbers) {
+              metadata.salesPhoneNumber = phoneNumbers.salesPhoneNumber || '';
+              metadata.customerPhoneNumber = phoneNumbers.customerPhoneNumber || '';
+            }
+
+            // ファイル名から日付と時間を抽出
+            var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
+            if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
+              var timestamp = timestampMatch[1];
+              var year = timestamp.substring(0, 4);
+              var month = timestamp.substring(4, 6);
+              var day = timestamp.substring(6, 8);
+              var hour = timestamp.substring(8, 10);
+              var minute = timestamp.substring(10, 12);
+              var second = timestamp.substring(12, 14);
+
+              metadata.callDate = year + '-' + month + '-' + day;
+              metadata.callTime = hour + ':' + minute + ':' + second;
+              Logger.log('ファイル名からタイムスタンプを抽出: ' + metadata.callDate + ' ' + metadata.callTime);
+            } else {
+              // 現在の日時をセット
+              var now = new Date();
+              metadata.callDate = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd');
+              metadata.callTime = Utilities.formatDate(now, 'Asia/Tokyo', 'HH:mm:ss');
+              Logger.log('タイムスタンプ抽出失敗のため現在時刻を使用: ' + metadata.callDate + ' ' + metadata.callTime);
+            }
+          } else {
+            throw new Error('メタデータから録音IDを取得できませんでした: ' + file.getName());
+          }
+        }
+
+        // metadata.recordId が取得できてる場合でも、時間情報の欠損に備えて
+        // ファイル名からのタイムスタンプ抽出を試みる部分を追加
+        if (metadata.recordId && (!metadata.callDate || !metadata.callTime)) {
+          Logger.log('record_idはあるが時間情報が不足しているため、補完を試みます');
+
+          // ファイル名から日付と時間を抽出
+          var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
+          if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
+            var timestamp = timestampMatch[1];
+            var year = timestamp.substring(0, 4);
+            var month = timestamp.substring(4, 6);
+            var day = timestamp.substring(6, 8);
+            var hour = timestamp.substring(8, 10);
+            var minute = timestamp.substring(10, 12);
+            var second = timestamp.substring(12, 14);
+
+            metadata.callDate = year + '-' + month + '-' + day;
+            metadata.callTime = hour + ':' + minute + ':' + second;
+            Logger.log('ファイル名から時間情報を補完: ' + metadata.callDate + ' ' + metadata.callTime);
+          }
         }
 
         // Recordingsシートの文字起こし状態を更新（成功）
@@ -499,6 +827,52 @@ function processBatch() {
         // ファイルからメタデータを取得してみる（可能であれば）
         try {
           var errorMetadata = extractMetadataFromFile(file.getName());
+
+          // メタデータからrecordIdが取得できない場合はファイル名から直接抽出
+          if (!errorMetadata || !errorMetadata.recordId) {
+            var fileNameMatch = file.getName().match(/zoom_call_\d+_([a-f0-9]+)\.mp3/i);
+            if (fileNameMatch && fileNameMatch[1]) {
+              if (!errorMetadata) errorMetadata = {};
+              errorMetadata.recordId = fileNameMatch[1];
+              Logger.log('エラー処理中にファイル名から直接record_idを抽出: ' + errorMetadata.recordId);
+
+              // ファイル名から日付と時間を抽出
+              var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
+              if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
+                var timestamp = timestampMatch[1];
+                var year = timestamp.substring(0, 4);
+                var month = timestamp.substring(4, 6);
+                var day = timestamp.substring(6, 8);
+                var hour = timestamp.substring(8, 10);
+                var minute = timestamp.substring(10, 12);
+                var second = timestamp.substring(12, 14);
+
+                errorMetadata.callDate = year + '-' + month + '-' + day;
+                errorMetadata.callTime = hour + ':' + minute + ':' + second;
+                Logger.log('エラー処理中にファイル名から時間情報を抽出: ' + errorMetadata.callDate + ' ' + errorMetadata.callTime);
+              }
+            }
+          }
+
+          // 時間情報が欠けている場合も補完
+          if (errorMetadata && errorMetadata.recordId && (!errorMetadata.callDate || !errorMetadata.callTime)) {
+            // ファイル名から日付と時間を抽出
+            var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
+            if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
+              var timestamp = timestampMatch[1];
+              var year = timestamp.substring(0, 4);
+              var month = timestamp.substring(4, 6);
+              var day = timestamp.substring(6, 8);
+              var hour = timestamp.substring(8, 10);
+              var minute = timestamp.substring(10, 12);
+              var second = timestamp.substring(12, 14);
+
+              errorMetadata.callDate = year + '-' + month + '-' + day;
+              errorMetadata.callTime = hour + ':' + minute + ':' + second;
+              Logger.log('エラー処理中に時間情報を補完: ' + errorMetadata.callDate + ' ' + errorMetadata.callTime);
+            }
+          }
+
           if (errorMetadata && errorMetadata.recordId) {
             // Recordingsシートの文字起こし状態を更新（エラー）
             updateTranscriptionStatusByRecordId(
@@ -507,9 +881,122 @@ function processBatch() {
               fileStartTimeStr,
               fileEndTimeStr
             );
+
+            // エラーでも最低限の情報をスプレッドシートに書き込む
+            try {
+              if (errorMetadata && errorMetadata.recordId && errorMetadata.callDate && errorMetadata.callTime) {
+                // スプレッドシートに書き込み
+                var errorCallData = {
+                  fileName: file.getName(),
+                  recordId: errorMetadata.recordId,
+                  callDate: errorMetadata.callDate,
+                  callTime: errorMetadata.callTime,
+                  salesPhoneNumber: errorMetadata.salesPhoneNumber || '',
+                  customerPhoneNumber: errorMetadata.customerPhoneNumber || '',
+                  salesCompany: '【エラー】情報抽出失敗',
+                  customerName: '【エラー】情報抽出失敗',
+                  callStatus1: '',
+                  callStatus2: '',
+                  reasonForRefusal: '',
+                  reasonForRefusalCategory: '',
+                  reasonForAppointment: '',
+                  reasonForAppointmentCategory: '',
+                  summary: 'エラーが発生しました: ' + error.toString().substring(0, 100),
+                  transcription: 'エラー発生：' + error.toString()
+                };
+
+                // call_recordsシートに出力
+                var processedSheetId = localSettings.PROCESSED_SHEET_ID || '';
+                Logger.log('エラー情報の保存先: PROCESSED_SHEET_ID=' + processedSheetId);
+                saveCallRecordToSheet(errorCallData, processedSheetId, 'call_records');
+                Logger.log('エラー情報をスプレッドシートに保存しました');
+              } else {
+                Logger.log('必須メタデータが不足しているためスプレッドシートへの書き込みをスキップ');
+              }
+            } catch (saveError) {
+              Logger.log('エラー情報のスプレッドシート保存中にエラー: ' + saveError.toString());
+            }
+          } else {
+            Logger.log('エラー処理中にrecord_idが特定できませんでした: ' + file.getName());
           }
         } catch (metaError) {
           Logger.log('エラー処理中のメタデータ取得に失敗: ' + metaError.toString());
+
+          // 最後の手段としてファイル名からの抽出を試みる
+          try {
+            var lastChanceMatch = file.getName().match(/zoom_call_\d+_([a-f0-9]+)\.mp3/i);
+            if (lastChanceMatch && lastChanceMatch[1]) {
+              var recordId = lastChanceMatch[1];
+              Logger.log('エラー処理の最終手段でファイル名からrecord_idを抽出: ' + recordId);
+
+              // ファイル名から日付と時間を抽出
+              var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
+              var callDate = null;
+              var callTime = null;
+
+              if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
+                var timestamp = timestampMatch[1];
+                var year = timestamp.substring(0, 4);
+                var month = timestamp.substring(4, 6);
+                var day = timestamp.substring(6, 8);
+                var hour = timestamp.substring(8, 10);
+                var minute = timestamp.substring(10, 12);
+                var second = timestamp.substring(12, 14);
+
+                callDate = year + '-' + month + '-' + day;
+                callTime = hour + ':' + minute + ':' + second;
+                Logger.log('最終手段でファイル名から時間情報を抽出: ' + callDate + ' ' + callTime);
+              } else {
+                // 現在時刻を使用
+                var now = new Date();
+                callDate = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd');
+                callTime = Utilities.formatDate(now, 'Asia/Tokyo', 'HH:mm:ss');
+                Logger.log('最終手段で現在時刻を使用: ' + callDate + ' ' + callTime);
+              }
+
+              updateTranscriptionStatusByRecordId(
+                recordId,
+                'ERROR: ' + error.toString().substring(0, 100), // エラーメッセージは短く切り詰める
+                fileStartTimeStr,
+                fileEndTimeStr
+              );
+
+              // 最終手段でもスプレッドシートに書き込み
+              try {
+                if (recordId && callDate && callTime) {
+                  // スプレッドシートに書き込み
+                  var lastChanceData = {
+                    fileName: file.getName(),
+                    recordId: recordId,
+                    callDate: callDate,
+                    callTime: callTime,
+                    salesPhoneNumber: '',
+                    customerPhoneNumber: '',
+                    salesCompany: '【最終手段】情報抽出失敗',
+                    customerName: '【最終手段】情報抽出失敗',
+                    callStatus1: '',
+                    callStatus2: '',
+                    reasonForRefusal: '',
+                    reasonForRefusalCategory: '',
+                    reasonForAppointment: '',
+                    reasonForAppointmentCategory: '',
+                    summary: '最終手段による処理: ' + error.toString().substring(0, 100),
+                    transcription: '最終手段による処理：' + error.toString()
+                  };
+
+                  // call_recordsシートに出力
+                  var processedSheetId = localSettings.PROCESSED_SHEET_ID || '';
+                  Logger.log('最終手段の情報保存先: PROCESSED_SHEET_ID=' + processedSheetId);
+                  saveCallRecordToSheet(lastChanceData, processedSheetId, 'call_records');
+                  Logger.log('最終手段の情報をスプレッドシートに保存しました');
+                }
+              } catch (lastSaveError) {
+                Logger.log('最終手段のスプレッドシート保存中にエラー: ' + lastSaveError.toString());
+              }
+            }
+          } catch (lastError) {
+            Logger.log('すべての方法でrecord_id抽出に失敗: ' + lastError.toString());
+          }
         }
 
         // ファイルをエラーフォルダに移動
@@ -542,6 +1029,21 @@ function processBatch() {
       '失敗=' + results.error + '件, ' +
       '処理時間=' + processingTime + '秒';
     Logger.log(summary);
+
+    // 管理者に通知メールを送信（部分的失敗が検知された場合のみ）
+    if (results.total > 0) {
+      try {
+        var settings = getSystemSettings();
+        var adminEmails = settings.ADMIN_EMAILS || [];
+
+        for (var i = 0; i < adminEmails.length; i++) {
+          NotificationService.sendPartialFailureDetectionSummary(adminEmails[i], results);
+        }
+        Logger.log('部分的失敗検知結果の通知メールを送信しました');
+      } catch (notificationError) {
+        Logger.log('通知メール送信エラー: ' + notificationError.toString());
+      }
+    }
 
     return summary;
   } catch (error) {
@@ -1113,6 +1615,11 @@ function onOpen() {
     .addItem('直近24時間の録音を取得', 'TriggerManager.fetchLast24HoursRecordings')
     .addItem('直近48時間の録音を取得', 'TriggerManager.fetchLast48HoursRecordings')
     .addItem('すべての未処理録音を取得', 'TriggerManager.fetchAllPendingRecordings')
+    .addSeparator()
+    .addItem('【特別対応】PENDINGの文字起こしを再処理', 'resetPendingTranscriptions')
+    .addItem('【特別対応】エラーフォルダのファイルを強制復旧', 'forceRecoverAllErrorFiles')
+    .addItem('【特別対応】特別復旧処理トリガーを設定', 'TriggerManager.setupRecoveryTriggers')
+    .addItem('【特別対応】特別復旧処理トリガーを削除', 'TriggerManager.removeRecoveryTriggers')
     .addToUi();
 }
 
@@ -1154,10 +1661,11 @@ function recoverErrorFiles() {
         var description = file.getDescription() || "";
         var hasRetried = description.indexOf("[RETRIED]") >= 0;
 
-        if (!hasRetried) {
-          errorFiles.push(file);
-        } else {
-          Logger.log('すでにリトライ済みのファイルはスキップ: ' + file.getName());
+        // すべてのファイルを対象とする（リトライ済みかどうかに関わらず）
+        errorFiles.push(file);
+
+        if (hasRetried) {
+          Logger.log('リトライ済みのファイルも含めて処理: ' + file.getName());
         }
       }
     }
@@ -1201,7 +1709,34 @@ function recoverErrorFiles() {
         file.setDescription(originalDescription + " [RETRIED]");
 
         // ファイルを未処理フォルダに移動
-        FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
+        try {
+          FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
+        } catch (moveError) {
+          Logger.log('通常の移動方法で失敗: ' + moveError.toString());
+
+          // 代替移動方法を試す
+          try {
+            // 1. ファイルのコピーを未処理フォルダに作成
+            Logger.log('代替移動方法を試行: コピー → 削除');
+            var targetFolder = DriveApp.getFolderById(localSettings.SOURCE_FOLDER_ID);
+            var fileName = file.getName();
+            var fileBlob = file.getBlob();
+            var copiedFile = targetFolder.createFile(fileBlob);
+            copiedFile.setName(fileName);
+            copiedFile.setDescription(originalDescription + " [RETRIED][COPY_RECOVERED]");
+
+            // 2. 元のファイルを削除試行（失敗してもOK）
+            try {
+              file.setTrashed(true);
+            } catch (trashError) {
+              Logger.log('元ファイルの削除に失敗: ' + trashError.toString());
+            }
+
+            Logger.log('代替方法でファイル移動完了: ' + fileName);
+          } catch (copyError) {
+            throw new Error('代替移動方法でも失敗: ' + copyError.toString());
+          }
+        }
 
         // 結果を記録
         results.recovered++;
@@ -1239,5 +1774,634 @@ function recoverErrorFiles() {
     var errorMessage = 'エラーファイル復旧処理でエラーが発生: ' + error.toString();
     Logger.log(errorMessage);
     return errorMessage;
+  }
+}
+
+/**
+ * 特別復旧処理: PENDINGステータスのままになっている文字起こしを再処理
+ */
+function resetPendingTranscriptions() {
+  var startTime = new Date();
+  Logger.log('PENDING状態の文字起こし復旧処理開始: ' + startTime);
+
+  try {
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+    if (!spreadsheetId) {
+      throw new Error('Recordingsシートのスプレッドシートが設定されていません');
+    }
+
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName('Recordings');
+
+    if (!sheet) {
+      throw new Error('Recordingsシートが見つかりません');
+    }
+
+    var dataRange = sheet.getDataRange();
+    var values = dataRange.getValues();
+    var pendingRecords = [];
+
+    // ヘッダー行をスキップして2行目から処理
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      // status_transcription（12列目）をチェック
+      if (row[11] === 'PENDING') {
+        pendingRecords.push({
+          rowIndex: i + 1, // スプレッドシートの行番号（1始まり）
+          recordId: row[0], // record_id
+          timestamp: row[1] // timestamp_recording
+        });
+      }
+    }
+
+    Logger.log('PENDING状態の文字起こしレコード数: ' + pendingRecords.length);
+
+    if (pendingRecords.length === 0) {
+      return 'PENDING状態の文字起こしレコードはありませんでした。';
+    }
+
+    // 処理対象の記録
+    var results = {
+      total: pendingRecords.length,
+      reset: 0,
+      failed: 0,
+      details: []
+    };
+
+    // PENDINGレコードを処理
+    for (var i = 0; i < pendingRecords.length; i++) {
+      var record = pendingRecords[i];
+
+      try {
+        Logger.log('PENDING文字起こし処理: record_id=' + record.recordId);
+
+        // タイムスタンプを更新して再処理をトリガー
+        var now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+
+        // 処理状態を一旦RESETにして再処理を促す
+        updateTranscriptionStatusByRecordId(
+          record.recordId,
+          'RESET_PENDING',
+          now,
+          now
+        );
+
+        // ドライブ内でファイルを検索
+        var recordIdPattern = new RegExp(record.recordId);
+        var files = DriveApp.searchFiles('fullText contains "' + record.recordId + '" and mimeType contains "audio"');
+        var fileFound = false;
+
+        // ファイルが見つからない場合、より広い範囲で検索を試みる
+        if (!files.hasNext()) {
+          // ファイル名で検索
+          var fileNamePattern = record.recordId;
+          Logger.log('ファイル名による再検索: ' + fileNamePattern);
+          files = DriveApp.searchFiles('title contains "' + fileNamePattern + '"');
+        }
+
+        // 各フォルダをチェック
+        var settings = getSystemSettings();
+        var foldersToCheck = [
+          { id: settings.ERROR_FOLDER_ID, name: 'エラーフォルダ' },
+          { id: settings.PROCESSING_FOLDER_ID, name: '処理中フォルダ' },
+          { id: settings.COMPLETED_FOLDER_ID, name: '完了フォルダ' }
+        ];
+
+        while (files.hasNext()) {
+          var file = files.next();
+          fileFound = true;
+          Logger.log('ファイルを発見: ' + file.getName());
+
+          // ファイルの現在のフォルダを特定
+          var parents = file.getParents();
+          var currentFolderId = parents.hasNext() ? parents.next().getId() : null;
+          var folderName = 'unknown';
+
+          // フォルダ名を特定
+          for (var j = 0; j < foldersToCheck.length; j++) {
+            if (foldersToCheck[j].id === currentFolderId) {
+              folderName = foldersToCheck[j].name;
+              break;
+            }
+          }
+
+          // エラーフォルダや処理中フォルダにある場合は未処理フォルダに移動
+          if (currentFolderId === settings.ERROR_FOLDER_ID ||
+            currentFolderId === settings.PROCESSING_FOLDER_ID) {
+            try {
+              // リトライ済みマークを追加
+              var originalDescription = file.getDescription() || "";
+              if (originalDescription.indexOf("[RESET_RETRY]") === -1) {
+                file.setDescription(originalDescription + " [RESET_RETRY]");
+              }
+
+              // 未処理フォルダに移動
+              FileProcessor.moveFileToFolder(file, settings.SOURCE_FOLDER_ID);
+              Logger.log('ファイルを未処理フォルダに移動しました: ' + file.getName());
+            } catch (moveError) {
+              Logger.log('ファイル移動エラー: ' + moveError);
+
+              // 代替移動方法を試す
+              try {
+                // 1. ファイルのコピーを未処理フォルダに作成
+                Logger.log('代替移動方法を試行: コピー → 削除');
+                var targetFolder = DriveApp.getFolderById(settings.SOURCE_FOLDER_ID);
+                var fileName = file.getName();
+                var fileBlob = file.getBlob();
+                var copiedFile = targetFolder.createFile(fileBlob);
+                copiedFile.setName(fileName);
+                copiedFile.setDescription(originalDescription + " [RESET_RETRY][COPY_RECOVERED]");
+
+                // 2. 元のファイルを削除試行（失敗してもOK）
+                try {
+                  file.setTrashed(true);
+                } catch (trashError) {
+                  Logger.log('元ファイルの削除に失敗: ' + trashError.toString());
+                }
+
+                Logger.log('代替方法でファイル移動完了: ' + fileName);
+              } catch (copyError) {
+                Logger.log('代替移動方法でも失敗: ' + copyError.toString() + '。ステータスのみ更新');
+                // この場合は失敗してもエラーをスローせず、ステータス更新だけでも成功とみなす
+              }
+            }
+          } else {
+            Logger.log('ファイルは ' + folderName + ' にあります。移動は不要です。');
+          }
+        }
+
+        if (!fileFound) {
+          Logger.log('対応するファイルが見つかりませんでした: record_id=' + record.recordId);
+        }
+
+        // 処理カウント更新
+        results.reset++;
+        results.details.push({
+          recordId: record.recordId,
+          status: 'reset',
+          fileFound: fileFound,
+          message: fileFound ? 'ステータスをリセットしました' : 'ファイルが見つからず、ステータスのみリセット'
+        });
+      } catch (error) {
+        Logger.log('PENDING文字起こしリセットエラー: ' + error.toString());
+
+        results.failed++;
+        results.details.push({
+          recordId: record.recordId,
+          status: 'error',
+          message: error.toString()
+        });
+      }
+    }
+
+    // 処理結果のログ出力
+    var endTime = new Date();
+    var processingTime = (endTime - startTime) / 1000; // 秒単位
+
+    var summary = 'PENDING状態の文字起こしリセット処理完了: ' +
+      '対象=' + results.total + '件, ' +
+      'リセット=' + results.reset + '件, ' +
+      '失敗=' + results.failed + '件, ' +
+      '処理時間=' + processingTime + '秒';
+
+    Logger.log(summary);
+    return summary;
+  } catch (error) {
+    var errorMessage = 'PENDING文字起こしリセット処理でエラー: ' + error.toString();
+    Logger.log(errorMessage);
+    return errorMessage;
+  }
+}
+
+/**
+ * 特別復旧処理: エラーフォルダに残っているファイルを一括で未処理フォルダに戻す
+ * 通常のrecoverErrorFilesではスキップされている[RETRIED]マーク付きのファイルも対象
+ */
+function forceRecoverAllErrorFiles() {
+  var startTime = new Date();
+  Logger.log('エラーフォルダ内ファイル強制復旧処理開始: ' + startTime);
+
+  try {
+    // 設定を取得
+    var localSettings = getSystemSettings();
+
+    if (!localSettings.ERROR_FOLDER_ID) {
+      throw new Error('エラーフォルダIDが設定されていません');
+    }
+
+    if (!localSettings.SOURCE_FOLDER_ID) {
+      throw new Error('処理対象フォルダIDが設定されていません');
+    }
+
+    // エラーフォルダのファイルを取得（すべて対象）
+    var errorFolder = DriveApp.getFolderById(localSettings.ERROR_FOLDER_ID);
+    var files = errorFolder.getFiles();
+    var errorFiles = [];
+
+    while (files.hasNext()) {
+      var file = files.next();
+      var mimeType = file.getMimeType() || "";
+
+      // 音声ファイルのみを対象とする
+      if (mimeType.indexOf('audio/') === 0 ||
+        mimeType === 'application/octet-stream' ||
+        file.getName().toLowerCase().indexOf('.mp3') !== -1) {
+        errorFiles.push(file);
+      }
+    }
+
+    Logger.log('強制復旧対象のエラーファイル数: ' + errorFiles.length);
+
+    if (errorFiles.length === 0) {
+      return '復旧対象のエラーファイルはありませんでした。';
+    }
+
+    // 復旧結果のトラッキング
+    var results = {
+      total: errorFiles.length,
+      recovered: 0,
+      failed: 0,
+      details: []
+    };
+
+    // ファイルを復旧
+    for (var i = 0; i < errorFiles.length; i++) {
+      var file = errorFiles[i];
+
+      try {
+        Logger.log('エラーファイル強制復旧処理: ' + file.getName());
+
+        // ファイルからメタデータを取得
+        var metadata = extractMetadataFromFile(file.getName());
+        var recordId = null;
+
+        if (metadata && metadata.recordId) {
+          recordId = metadata.recordId;
+        } else {
+          // メタデータから抽出できない場合はファイル名から直接抽出を試みる
+          var fileNameMatch = file.getName().match(/zoom_call_\d+_([a-f0-9]+)\.mp3/i);
+          if (fileNameMatch && fileNameMatch[1]) {
+            recordId = fileNameMatch[1];
+            Logger.log('ファイル名から直接record_idを抽出: ' + recordId);
+          }
+        }
+
+        if (recordId) {
+          // Recordingsシートの文字起こし状態を更新 (FORCE_RETRY)
+          updateTranscriptionStatusByRecordId(
+            recordId,
+            'FORCE_RETRY',
+            '',
+            Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
+          );
+        } else {
+          Logger.log('警告: record_idが特定できないため、Recordingsシートの状態更新をスキップします');
+        }
+
+        // 元の説明を保持し、強制リトライマークを追加
+        var originalDescription = file.getDescription() || "";
+        file.setDescription(originalDescription + " [FORCE_RETRY]");
+
+        // ファイルを未処理フォルダに移動
+        try {
+          FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
+        } catch (moveError) {
+          Logger.log('通常の移動方法で失敗: ' + moveError.toString());
+
+          // 代替移動方法を試す
+          try {
+            // 1. ファイルのコピーを未処理フォルダに作成
+            Logger.log('代替移動方法を試行: コピー → 削除');
+            var targetFolder = DriveApp.getFolderById(localSettings.SOURCE_FOLDER_ID);
+            var fileName = file.getName();
+            var fileBlob = file.getBlob();
+            var copiedFile = targetFolder.createFile(fileBlob);
+            copiedFile.setName(fileName);
+            copiedFile.setDescription(originalDescription + " [FORCE_RETRY][COPY_RECOVERED]");
+
+            // 2. 元のファイルを削除試行（失敗してもOK）
+            try {
+              file.setTrashed(true);
+            } catch (trashError) {
+              Logger.log('元ファイルの削除に失敗: ' + trashError.toString());
+            }
+
+            Logger.log('代替方法でファイル移動完了: ' + fileName);
+          } catch (copyError) {
+            throw new Error('代替移動方法でも失敗: ' + copyError.toString());
+          }
+        }
+
+        // 結果を記録
+        results.recovered++;
+        results.details.push({
+          fileName: file.getName(),
+          status: 'recovered',
+          message: 'エラーファイルを未処理フォルダに強制復旧しました'
+        });
+      } catch (error) {
+        Logger.log('エラーファイル強制復旧処理エラー: ' + error.toString());
+
+        results.failed++;
+        results.details.push({
+          fileName: file.getName(),
+          status: 'error',
+          message: error.toString()
+        });
+      }
+    }
+
+    // 処理結果のログ出力
+    var endTime = new Date();
+    var processingTime = (endTime - startTime) / 1000; // 秒単位
+
+    var summary = 'エラーファイル強制復旧処理完了: ' +
+      '対象=' + results.total + '件, ' +
+      '復旧=' + results.recovered + '件, ' +
+      '失敗=' + results.failed + '件, ' +
+      '処理時間=' + processingTime + '秒';
+
+    Logger.log(summary);
+    return summary;
+
+  } catch (error) {
+    var errorMessage = 'エラーファイル強制復旧処理でエラーが発生: ' + error.toString();
+    Logger.log(errorMessage);
+    return errorMessage;
+  }
+}
+
+/**
+ * 部分的失敗を検知して復旧する関数
+ * 文字起こしが SUCCESS になっているが、実際にはエラーが含まれているケースを検知
+ */
+function detectAndRecoverPartialFailures() {
+  var startTime = new Date();
+  Logger.log('部分的失敗検知・復旧処理開始: ' + startTime);
+
+  try {
+    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
+    if (!spreadsheetId) {
+      throw new Error('Recordingsシートのスプレッドシートが設定されていません');
+    }
+
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName('Recordings');
+
+    if (!sheet) {
+      throw new Error('Recordingsシートが見つかりません');
+    }
+
+    var dataRange = sheet.getDataRange();
+    var values = dataRange.getValues();
+    var suspiciousRecords = [];
+
+    // ヘッダー行をスキップして2行目から処理
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      var recordId = row[0]; // record_id
+      var statusTranscription = row[11]; // status_transcription
+
+      // SUCCESSになっているレコードをチェック
+      if (statusTranscription === 'SUCCESS') {
+        // call_recordsシートで実際の文字起こし内容をチェック
+        var transcriptionContent = getTranscriptionContentFromCallRecords(recordId);
+
+        if (transcriptionContent && isPartialFailure(transcriptionContent)) {
+          suspiciousRecords.push({
+            rowIndex: i + 1,
+            recordId: recordId,
+            timestamp: row[1], // timestamp_recording
+            issue: getFailureReason(transcriptionContent)
+          });
+        }
+      }
+    }
+
+    Logger.log('部分的失敗が疑われるレコード数: ' + suspiciousRecords.length);
+
+    if (suspiciousRecords.length === 0) {
+      return '部分的失敗が疑われるレコードはありませんでした。';
+    }
+
+    // 処理対象の記録
+    var results = {
+      total: suspiciousRecords.length,
+      recovered: 0,
+      failed: 0,
+      details: []
+    };
+
+    // 部分的失敗レコードを処理
+    for (var i = 0; i < suspiciousRecords.length; i++) {
+      var record = suspiciousRecords[i];
+
+      try {
+        Logger.log('部分的失敗復旧処理: record_id=' + record.recordId + ', 問題=' + record.issue);
+
+        var now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+
+        // ステータスをERRORに更新
+        updateTranscriptionStatusByRecordId(
+          record.recordId,
+          'ERROR_DETECTED: ' + record.issue,
+          now,
+          now
+        );
+
+        // 対応するファイルを検索してエラーフォルダに移動
+        var fileFound = moveFileToErrorFolder(record.recordId);
+
+        results.recovered++;
+        results.details.push({
+          recordId: record.recordId,
+          status: 'recovered',
+          issue: record.issue,
+          fileFound: fileFound,
+          message: 'エラーを検知してステータスを更新しました'
+        });
+      } catch (error) {
+        Logger.log('部分的失敗復旧エラー: ' + error.toString());
+
+        results.failed++;
+        results.details.push({
+          recordId: record.recordId,
+          status: 'error',
+          message: error.toString()
+        });
+      }
+    }
+
+    // 処理結果のログ出力
+    var endTime = new Date();
+    var processingTime = (endTime - startTime) / 1000; // 秒単位
+
+    var summary = '部分的失敗検知・復旧処理完了: ' +
+      '対象=' + results.total + '件, ' +
+      '復旧=' + results.recovered + '件, ' +
+      '失敗=' + results.failed + '件, ' +
+      '処理時間=' + processingTime + '秒';
+
+    Logger.log(summary);
+
+    // 管理者に通知メールを送信（部分的失敗が検知された場合のみ）
+    if (results.total > 0) {
+      try {
+        var settings = getSystemSettings();
+        var adminEmails = settings.ADMIN_EMAILS || [];
+
+        for (var i = 0; i < adminEmails.length; i++) {
+          NotificationService.sendPartialFailureDetectionSummary(adminEmails[i], results);
+        }
+        Logger.log('部分的失敗検知結果の通知メールを送信しました');
+      } catch (notificationError) {
+        Logger.log('通知メール送信エラー: ' + notificationError.toString());
+      }
+    }
+
+    return summary;
+  } catch (error) {
+    var errorMessage = '部分的失敗検知・復旧処理でエラー: ' + error.toString();
+    Logger.log(errorMessage);
+    return errorMessage;
+  }
+}
+
+/**
+ * call_recordsシートから文字起こし内容を取得
+ * @param {string} recordId - 録音ID
+ * @return {string} - 文字起こし内容
+ */
+function getTranscriptionContentFromCallRecords(recordId) {
+  try {
+    var processedSheetId = EnvironmentConfig.get('PROCESSED_SHEET_ID', '');
+    if (!processedSheetId) return null;
+
+    var spreadsheet = SpreadsheetApp.openById(processedSheetId);
+    var sheet = spreadsheet.getSheetByName('call_records');
+
+    if (!sheet) return null;
+
+    var dataRange = sheet.getDataRange();
+    var values = dataRange.getValues();
+
+    // ヘッダー行をスキップして2行目から処理
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      // record_idカラム（2列目）をチェック
+      if (row[1] === recordId) {
+        // transcriptionカラム（最後の列）を返す
+        return row[row.length - 1] || '';
+      }
+    }
+
+    return null;
+  } catch (error) {
+    Logger.log('文字起こし内容取得エラー: ' + error.toString());
+    return null;
+  }
+}
+
+/**
+ * 部分的失敗かどうかを判定
+ * @param {string} transcriptionContent - 文字起こし内容
+ * @return {boolean} - 部分的失敗の場合true
+ */
+function isPartialFailure(transcriptionContent) {
+  if (!transcriptionContent) return false;
+
+  var errorPatterns = [
+    '【文字起こし失敗:',
+    'GPT-4o-mini API呼び出しエラー',
+    'OpenAI APIからのレスポンスエラー',
+    'insufficient_quota',
+    'You exceeded your current quota',
+    'エラー発生：',
+    '情報抽出に失敗しました',
+    '不明（抽出エラー）',
+    'JSONの解析に失敗しました'
+  ];
+
+  for (var i = 0; i < errorPatterns.length; i++) {
+    if (transcriptionContent.includes(errorPatterns[i])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 失敗理由を特定
+ * @param {string} transcriptionContent - 文字起こし内容
+ * @return {string} - 失敗理由
+ */
+function getFailureReason(transcriptionContent) {
+  if (!transcriptionContent) return '不明なエラー';
+
+  if (transcriptionContent.includes('insufficient_quota') ||
+    transcriptionContent.includes('You exceeded your current quota')) {
+    return 'OpenAI APIクォータ制限';
+  }
+
+  if (transcriptionContent.includes('GPT-4o-mini API呼び出しエラー')) {
+    return 'GPT-4o-mini APIエラー';
+  }
+
+  if (transcriptionContent.includes('OpenAI APIからのレスポンスエラー')) {
+    return 'OpenAI APIレスポンスエラー';
+  }
+
+  if (transcriptionContent.includes('情報抽出に失敗しました')) {
+    return '情報抽出エラー';
+  }
+
+  if (transcriptionContent.includes('JSONの解析に失敗しました')) {
+    return 'JSON解析エラー';
+  }
+
+  return '部分的処理失敗';
+}
+
+/**
+ * ファイルをエラーフォルダに移動
+ * @param {string} recordId - 録音ID
+ * @return {boolean} - ファイルが見つかって移動できた場合true
+ */
+function moveFileToErrorFolder(recordId) {
+  try {
+    var settings = getSystemSettings();
+    var foldersToCheck = [
+      { id: settings.COMPLETED_FOLDER_ID, name: '完了フォルダ' },
+      { id: settings.PROCESSING_FOLDER_ID, name: '処理中フォルダ' },
+      { id: settings.SOURCE_FOLDER_ID, name: 'ソースフォルダ' }
+    ];
+
+    for (var i = 0; i < foldersToCheck.length; i++) {
+      var folderInfo = foldersToCheck[i];
+      if (!folderInfo.id) continue;
+
+      try {
+        var folder = DriveApp.getFolderById(folderInfo.id);
+        var files = folder.getFiles();
+
+        while (files.hasNext()) {
+          var file = files.next();
+          if (file.getName().includes(recordId)) {
+            // ファイルをエラーフォルダに移動
+            FileProcessor.moveFileToFolder(file, settings.ERROR_FOLDER_ID);
+            Logger.log('ファイルをエラーフォルダに移動: ' + file.getName());
+            return true;
+          }
+        }
+      } catch (folderError) {
+        Logger.log(folderInfo.name + 'のチェック中にエラー: ' + folderError.toString());
+      }
+    }
+
+    return false;
+  } catch (error) {
+    Logger.log('ファイル移動エラー: ' + error.toString());
+    return false;
   }
 }

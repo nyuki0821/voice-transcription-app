@@ -299,3 +299,118 @@ voice-transcription-app/
 - 個人情報を含む会話の処理には適切なセキュリティ対策を講じてください
 - 長期間のデータ保持には `RetentionCleaner.js` の設定を適切に行ってください
 - 文字起こしエラー発生時はログに記録されますが、call_recordsシートには保存されません 
+
+## エラーハンドリング・復旧機能
+
+### 改善されたエラー検知機能
+
+システムは以下の方法でエラーを検知・処理します：
+
+#### 1. リアルタイムエラー検知
+- **OpenAI APIエラー**: クォータ制限、APIキーエラー、レスポンスエラーを即座に検知
+- **文字起こしエラー**: GPT-4o-mini、AssemblyAIの処理エラーを検知
+- **部分的失敗**: エラーが発生しても処理が続行されるケースを検知
+
+#### 2. 部分的失敗の自動検知・復旧
+毎日22:00に自動実行される機能：
+
+```javascript
+// 手動実行の場合
+detectAndRecoverPartialFailures();
+```
+
+**検知対象のエラーパターン:**
+- `insufficient_quota` (OpenAI APIクォータ制限)
+- `GPT-4o-mini API呼び出しエラー`
+- `OpenAI APIからのレスポンスエラー`
+- `情報抽出に失敗しました`
+- `JSONの解析に失敗しました`
+
+#### 3. エラーステータスの適切な管理
+
+**ステータスの種類:**
+- `SUCCESS`: 正常完了
+- `ERROR: [エラー内容]`: 処理エラー
+- `ERROR_DETECTED: [検知された問題]`: 部分的失敗を後から検知
+- `RETRY`: 復旧処理対象
+- `PENDING`: 処理待ち
+
+#### 4. 自動復旧機能
+
+**復旧処理の種類:**
+1. **エラーファイル復旧**: `recoverErrorFiles()`
+2. **PENDING状態リセット**: `resetPendingTranscriptions()`
+3. **部分的失敗復旧**: `detectAndRecoverPartialFailures()`
+4. **強制復旧**: `forceRecoverAllErrorFiles()`
+
+### 使用方法
+
+#### 手動でエラー検知・復旧を実行
+
+```javascript
+// 部分的失敗を検知・復旧
+var result = detectAndRecoverPartialFailures();
+Logger.log(result);
+
+// エラーファイルを復旧
+var result = recoverErrorFiles();
+Logger.log(result);
+
+// PENDING状態をリセット
+var result = resetPendingTranscriptions();
+Logger.log(result);
+```
+
+#### トリガーの設定
+
+```javascript
+// 全トリガーを設定（部分的失敗検知を含む）
+TriggerManager.setupAllTriggers();
+
+// 部分的失敗検知トリガーのみ設定
+TriggerManager.setupPartialFailureDetectionTrigger();
+```
+
+### 通知機能
+
+部分的失敗が検知された場合、管理者に自動でメール通知が送信されます。
+
+**通知内容:**
+- 検知されたレコード数
+- 復旧成功・失敗件数
+- 各レコードの詳細情報（Record ID、問題の種類、復旧状況）
+
+### 設定
+
+環境設定スプレッドシートの `settings` シートで以下を設定：
+
+| 設定項目 | 説明 |
+|---------|------|
+| ADMIN_EMAILS | 通知先メールアドレス（カンマ区切り） |
+| ENHANCE_WITH_OPENAI | OpenAI機能の有効/無効（`true`/`false`） |
+
+**OpenAI APIエラー時の緊急対処:**
+```
+ENHANCE_WITH_OPENAI = false
+```
+に設定すると、OpenAI APIを使わずにAssemblyAIのみで処理を続行できます。
+
+### トラブルシューティング
+
+#### よくある問題と対処法
+
+1. **OpenAI APIクォータ制限**
+   - 使用量ダッシュボードで確認: https://platform.openai.com/usage
+   - 請求情報を確認: https://platform.openai.com/account/billing
+   - 一時的に `ENHANCE_WITH_OPENAI = false` に設定
+
+2. **部分的失敗が多発する場合**
+   - `detectAndRecoverPartialFailures()` を手動実行
+   - ログでエラーパターンを確認
+   - 必要に応じてAPIキーや設定を見直し
+
+3. **ファイルが見つからない場合**
+   - 各フォルダ（SOURCE, PROCESSING, COMPLETED, ERROR）を確認
+   - `moveFileToErrorFolder()` でファイルの場所を特定
+
+## セットアップ方法 

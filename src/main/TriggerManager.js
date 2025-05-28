@@ -18,7 +18,10 @@ var TriggerManager = (function () {
     fetchLast6HoursRecordings: fetchLast6HoursRecordings,
     fetchLast24HoursRecordings: fetchLast24HoursRecordings,
     fetchLast48HoursRecordings: fetchLast48HoursRecordings,
-    fetchAllPendingRecordings: fetchAllPendingRecordings
+    fetchAllPendingRecordings: fetchAllPendingRecordings,
+    setupRecoveryTriggers: setupRecoveryTriggers,
+    removeRecoveryTriggers: removeRecoveryTriggers,
+    setupPartialFailureDetectionTrigger: setupPartialFailureDetectionTrigger
   };
 })();
 
@@ -155,6 +158,7 @@ function setupAllTriggers() {
   setupDailyZoomApiTokenRefresh();
   setupRecordingsSheetTrigger();
   setupInterruptedFilesRecoveryTrigger();
+  setupPartialFailureDetectionTrigger();
 
   Logger.log('全トリガーが正常に設定されました');
 }
@@ -378,4 +382,76 @@ function removeAllProjectTriggers() {
     ScriptApp.deleteTrigger(triggers[i]);
   }
   Logger.log('すべてのプロジェクトトリガーが削除されました');
+}
+
+/**
+ * 特別復旧処理用のトリガーを設定（一時的な対応用）
+ * PENDINGのままのファイルとエラーフォルダのファイルを定期的に再処理
+ */
+function setupRecoveryTriggers() {
+  try {
+    // 既存の該当トリガーを削除
+    deleteTriggerByFunctionName('resetPendingTranscriptions');
+    deleteTriggerByFunctionName('forceRecoverAllErrorFiles');
+
+    // 2時間ごとにPENDINGファイル復旧処理を実行
+    ScriptApp.newTrigger('resetPendingTranscriptions')
+      .timeBased()
+      .everyHours(2)
+      .create();
+
+    // 4時間ごとにエラーファイル強制復旧処理を実行
+    ScriptApp.newTrigger('forceRecoverAllErrorFiles')
+      .timeBased()
+      .everyHours(4)
+      .create();
+
+    Logger.log('特別復旧処理トリガーが正常に設定されました');
+    return '特別復旧処理トリガーが正常に設定されました';
+  } catch (e) {
+    var errorMsg = '特別復旧処理トリガーの設定でエラーが発生しました: ' + e.toString();
+    Logger.log(errorMsg);
+    return errorMsg;
+  }
+}
+
+/**
+ * 特別復旧処理用のトリガーを削除
+ */
+function removeRecoveryTriggers() {
+  try {
+    // 復旧処理トリガーを削除
+    deleteTriggerByFunctionName('resetPendingTranscriptions');
+    deleteTriggerByFunctionName('forceRecoverAllErrorFiles');
+
+    Logger.log('特別復旧処理トリガーが正常に削除されました');
+    return '特別復旧処理トリガーが正常に削除されました';
+  } catch (e) {
+    var errorMsg = '特別復旧処理トリガーの削除でエラーが発生しました: ' + e.toString();
+    Logger.log(errorMsg);
+    return errorMsg;
+  }
+}
+
+/**
+ * 部分的失敗検知・復旧のトリガーを設定する
+ * 毎日22:00に実行して、SUCCESSになっているが実際にはエラーが含まれているレコードを検知・復旧
+ */
+function setupPartialFailureDetectionTrigger() {
+  try {
+    deleteTriggersWithNameContaining('detectAndRecoverPartialFailures');
+
+    // 毎日22:00に部分的失敗検知・復旧を実行
+    ScriptApp.newTrigger('detectAndRecoverPartialFailures')
+      .timeBased()
+      .atHour(22)
+      .nearMinute(0)
+      .everyDays(1)
+      .create();
+
+    return "部分的失敗検知・復旧トリガーを設定しました（毎日22:00）";
+  } catch (error) {
+    logAndNotifyError(error, "部分的失敗検知トリガー設定");
+    return "エラーが発生しました: " + error.toString();
+  }
 } 

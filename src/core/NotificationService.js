@@ -50,8 +50,59 @@ var NotificationService = (function () {
     }
   }
 
+  /**
+   * 部分的失敗検知結果をメールで送信する
+   * @param {string} email - 送信先メールアドレス
+   * @param {Object} results - 検知結果オブジェクト
+   */
+  function sendPartialFailureDetectionSummary(email, results) {
+    if (!email || !results) {
+      return;
+    }
+
+    try {
+      var subject = '顧客会話自動文字起こしシステム - 部分的失敗検知結果';
+
+      var body = '部分的失敗検知・復旧処理の結果\n\n';
+
+      // 基本的なサマリー
+      body += '検知サマリー:\n';
+      body += '対象レコード数: ' + results.total + '件\n';
+      body += '復旧成功: ' + results.recovered + '件\n';
+      body += '復旧失敗: ' + results.failed + '件\n\n';
+
+      // 詳細情報
+      if (results.details && results.details.length > 0) {
+        body += '詳細情報:\n';
+        for (var i = 0; i < results.details.length; i++) {
+          var detail = results.details[i];
+          body += '- Record ID: ' + detail.recordId + '\n';
+          body += '  ステータス: ' + detail.status + '\n';
+          if (detail.issue) {
+            body += '  問題: ' + detail.issue + '\n';
+          }
+          body += '  メッセージ: ' + detail.message + '\n';
+          if (detail.fileFound !== undefined) {
+            body += '  ファイル移動: ' + (detail.fileFound ? '成功' : '失敗') + '\n';
+          }
+          body += '\n';
+        }
+      }
+
+      body += '\n注意: 部分的失敗が検知されたレコードは、エラーステータスに更新され、再処理の対象となります。\n';
+      body += 'OpenAI APIクォータ制限が原因の場合は、クォータ復旧後に自動的に再処理されます。';
+
+      // メール送信
+      GmailApp.sendEmail(email, subject, body);
+    } catch (error) {
+      // エラーは無視
+      Logger.log('部分的失敗検知結果メール送信中にエラー: ' + error.toString());
+    }
+  }
+
   // 公開メソッド
   return {
-    sendDailyProcessingSummary: sendDailyProcessingSummary
+    sendDailyProcessingSummary: sendDailyProcessingSummary,
+    sendPartialFailureDetectionSummary: sendPartialFailureDetectionSummary
   };
 })();
