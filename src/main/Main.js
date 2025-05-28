@@ -4,6 +4,9 @@
  *
  * 依存モジュール:
  * - EnvironmentConfig (src/config/EnvironmentConfig.js)
+ * - ConfigManager (src/core/ConfigManager.js)
+ * - Constants (src/core/Constants.js)
+ * - FileMovementService (src/core/FileMovementService.js)
  * - TriggerManager (src/main/TriggerManager.js)
  * - ZoomphoneProcessor (src/zoom/ZoomphoneProcessor.js)
  * - NotificationService (src/core/NotificationService.js)
@@ -21,66 +24,27 @@ var settings = getSystemSettings();
 var NOTIFICATION_HOURS = [9, 12, 19]; // 通知を送信する時間（9時、12時、19時）
 
 /**
- * システム設定を取得する関数
- * 環境設定ファイルから一元的に取得
+ * システム設定を取得する関数（下位互換性のため残す）
+ * 新しいコードではConfigManager.getConfig()を使用すること
  */
 function getSystemSettings() {
-  try {
-    // 環境設定を取得
-    var config = EnvironmentConfig.getConfig();
-
-    // 結果オブジェクトを構築
-    return {
-      ASSEMBLYAI_API_KEY: config.ASSEMBLYAI_API_KEY || '',
-      OPENAI_API_KEY: config.OPENAI_API_KEY || '',
-      SOURCE_FOLDER_ID: config.SOURCE_FOLDER_ID || '',
-      PROCESSING_FOLDER_ID: config.PROCESSING_FOLDER_ID || '',
-      COMPLETED_FOLDER_ID: config.COMPLETED_FOLDER_ID || '',
-      ERROR_FOLDER_ID: config.ERROR_FOLDER_ID || '',
-      ADMIN_EMAILS: config.ADMIN_EMAILS || [],
-      MAX_BATCH_SIZE: config.MAX_BATCH_SIZE || 10,
-      ENHANCE_WITH_OPENAI: config.ENHANCE_WITH_OPENAI !== false,
-      ZOOM_CLIENT_ID: config.ZOOM_CLIENT_ID || '',
-      ZOOM_CLIENT_SECRET: config.ZOOM_CLIENT_SECRET || '',
-      ZOOM_ACCOUNT_ID: config.ZOOM_ACCOUNT_ID || '',
-      ZOOM_WEBHOOK_SECRET: config.ZOOM_WEBHOOK_SECRET || '',
-      RECORDINGS_SHEET_ID: config.RECORDINGS_SHEET_ID || '',
-      PROCESSED_SHEET_ID: config.PROCESSED_SHEET_ID || ''
-    };
-  } catch (error) {
-    Logger.log('設定の読み込み中にエラー: ' + error);
-    return getDefaultSettings();
-  }
+  return ConfigManager.getConfig();
 }
 
 /**
- * デフォルト設定を返す関数
+ * デフォルト設定を返す関数（下位互換性のため残す）
+ * 新しいコードではConfigManager.getDefaultConfig()を使用すること
  */
 function getDefaultSettings() {
-  return {
-    ASSEMBLYAI_API_KEY: '',
-    OPENAI_API_KEY: '',
-    SOURCE_FOLDER_ID: '',
-    PROCESSING_FOLDER_ID: '',
-    COMPLETED_FOLDER_ID: '',
-    ERROR_FOLDER_ID: '',
-    ADMIN_EMAILS: [],
-    MAX_BATCH_SIZE: 10,
-    ENHANCE_WITH_OPENAI: true,
-    ZOOM_CLIENT_ID: '',
-    ZOOM_CLIENT_SECRET: '',
-    ZOOM_ACCOUNT_ID: '',
-    ZOOM_WEBHOOK_SECRET: '',
-    RECORDINGS_SHEET_ID: '',
-    PROCESSED_SHEET_ID: ''
-  };
+  return ConfigManager.getDefaultConfig();
 }
 
 /**
- * 設定をロードする関数（互換性のために残す - 新しいgetSystemSettings関数を使用）
+ * 設定をロードする関数（下位互換性のため残す）
+ * 新しいコードではConfigManager.getConfig()を使用すること
  */
 function loadSettings() {
-  return getSystemSettings();
+  return ConfigManager.getConfig();
 }
 
 /**
@@ -1645,36 +1609,31 @@ function recoverErrorFiles() {
 
   try {
     // 設定を取得
-    var localSettings = getSystemSettings();
+    var config = ConfigManager.getConfig();
 
-    if (!localSettings.ERROR_FOLDER_ID) {
+    if (!config.ERROR_FOLDER_ID) {
       throw new Error('エラーフォルダIDが設定されていません');
     }
 
-    if (!localSettings.SOURCE_FOLDER_ID) {
+    if (!config.SOURCE_FOLDER_ID) {
       throw new Error('処理対象フォルダIDが設定されていません');
     }
 
     // エラーフォルダのファイルを取得
-    var errorFolder = DriveApp.getFolderById(localSettings.ERROR_FOLDER_ID);
+    var errorFolder = ConfigManager.getFolder('ERROR');
     var files = errorFolder.getFiles();
     var errorFiles = [];
 
     while (files.hasNext()) {
       var file = files.next();
-      var mimeType = file.getMimeType() || "";
 
       // 音声ファイルのみを対象とする
-      if (mimeType.indexOf('audio/') === 0 ||
-        mimeType === 'application/octet-stream' ||
-        file.getName().toLowerCase().indexOf('.mp3') !== -1) {
+      if (Constants.isAudioFile(file)) {
+        errorFiles.push(file);
 
         // ファイルの説明を取得してリトライ済みかチェック
         var description = file.getDescription() || "";
-        var hasRetried = description.indexOf("[RETRIED]") >= 0;
-
-        // すべてのファイルを対象とする（リトライ済みかどうかに関わらず）
-        errorFiles.push(file);
+        var hasRetried = description.indexOf(Constants.RETRY_MARKS.RETRIED) >= 0;
 
         if (hasRetried) {
           Logger.log('リトライ済みのファイルも含めて処理: ' + file.getName());
@@ -1689,12 +1648,8 @@ function recoverErrorFiles() {
     }
 
     // 復旧結果のトラッキング
-    var results = {
-      total: errorFiles.length,
-      recovered: 0,
-      failed: 0,
-      details: []
-    };
+    var results = FileMovementService.createResultObject();
+    results.total = errorFiles.length;
 
     // ファイルを復旧
     for (var i = 0; i < errorFiles.length; i++) {
@@ -1710,77 +1665,41 @@ function recoverErrorFiles() {
           // Recordingsシートの文字起こし状態を更新 (RETRY)
           updateTranscriptionStatusByRecordId(
             metadata.recordId,
-            'RETRY',
+            Constants.STATUS.RETRY,
             '',
             Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
           );
         }
 
-        // 元の説明を保持し、リトライ済みマークを追加
-        var originalDescription = file.getDescription() || "";
-        file.setDescription(originalDescription + " [RETRIED]");
-
-        // ファイルを未処理フォルダに移動
-        try {
-          FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
-        } catch (moveError) {
-          Logger.log('通常の移動方法で失敗: ' + moveError.toString());
-
-          // 代替移動方法を試す
-          try {
-            // 1. ファイルのコピーを未処理フォルダに作成
-            Logger.log('代替移動方法を試行: コピー → 削除');
-            var targetFolder = DriveApp.getFolderById(localSettings.SOURCE_FOLDER_ID);
-            var fileName = file.getName();
-            var fileBlob = file.getBlob();
-            var copiedFile = targetFolder.createFile(fileBlob);
-            copiedFile.setName(fileName);
-            copiedFile.setDescription(originalDescription + " [RETRIED][COPY_RECOVERED]");
-
-            // 2. 元のファイルを削除試行（失敗してもOK）
-            try {
-              file.setTrashed(true);
-            } catch (trashError) {
-              Logger.log('元ファイルの削除に失敗: ' + trashError.toString());
-            }
-
-            Logger.log('代替方法でファイル移動完了: ' + fileName);
-          } catch (copyError) {
-            throw new Error('代替移動方法でも失敗: ' + copyError.toString());
-          }
-        }
+        // ファイルを未処理フォルダに移動（リトライマーク付き）
+        FileMovementService.moveFileWithFallback(
+          file,
+          config.SOURCE_FOLDER_ID,
+          Constants.RETRY_MARKS.RETRIED
+        );
 
         // 結果を記録
-        results.recovered++;
-        results.details.push({
-          fileName: file.getName(),
-          status: 'recovered',
-          message: 'エラーファイルを未処理フォルダに復旧しました（1回限りのリトライ）'
-        });
+        FileMovementService.addSuccessResult(
+          results,
+          file.getName(),
+          metadata ? metadata.recordId : null,
+          'エラーファイルを未処理フォルダに復旧しました（1回限りのリトライ）'
+        );
+
       } catch (error) {
         Logger.log('エラーファイル復旧処理エラー: ' + error.toString());
 
-        results.failed++;
-        results.details.push({
-          fileName: file.getName(),
-          status: 'error',
-          message: error.toString()
-        });
+        FileMovementService.addFailureResult(
+          results,
+          file.getName(),
+          null,
+          error.toString()
+        );
       }
     }
 
     // 処理結果のログ出力
-    var endTime = new Date();
-    var processingTime = (endTime - startTime) / 1000; // 秒単位
-
-    var summary = 'エラーファイル復旧処理完了: ' +
-      '対象=' + results.total + '件, ' +
-      '復旧=' + results.recovered + '件, ' +
-      '失敗=' + results.failed + '件, ' +
-      '処理時間=' + processingTime + '秒';
-
-    Logger.log(summary);
-    return summary;
+    return FileMovementService.logProcessingResult(startTime, results, 'エラーファイル復旧処理');
 
   } catch (error) {
     var errorMessage = 'エラーファイル復旧処理でエラーが発生: ' + error.toString();
@@ -2151,29 +2070,19 @@ function detectAndRecoverPartialFailures() {
   Logger.log('見逃しエラー検知・復旧処理を開始します');
 
   try {
-    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('recordings');
-    if (!sheet) {
-      Logger.log('recordingsシートが見つかりません');
-      return;
-    }
-
+    var sheet = ConfigManager.getRecordingsSheet();
     var data = sheet.getDataRange().getValues();
     var headers = data[0];
-    var idIndex = headers.indexOf('id');
-    var statusTranscriptionIndex = headers.indexOf('status_transcription');
-    var updatedAtIndex = headers.indexOf('updated_at');
+    var idIndex = headers.indexOf(Constants.COLUMNS.RECORDINGS.ID);
+    var statusTranscriptionIndex = headers.indexOf(Constants.COLUMNS.RECORDINGS.STATUS_TRANSCRIPTION);
+    var updatedAtIndex = headers.indexOf(Constants.COLUMNS.RECORDINGS.UPDATED_AT);
 
     if (idIndex === -1 || statusTranscriptionIndex === -1) {
-      Logger.log('必要なカラムが見つかりません');
+      Logger.log(Constants.ERROR_MESSAGES.REQUIRED_COLUMNS_NOT_FOUND);
       return;
     }
 
-    var results = {
-      total: 0,
-      recovered: 0,
-      failed: 0,
-      details: []
-    };
+    var results = FileMovementService.createResultObject();
 
     // SUCCESSステータスのレコードを検査
     for (var i = 1; i < data.length; i++) {
@@ -2181,7 +2090,7 @@ function detectAndRecoverPartialFailures() {
       var recordId = row[idIndex];
       var status = row[statusTranscriptionIndex];
 
-      if (status === 'SUCCESS') {
+      if (status === Constants.STATUS.SUCCESS) {
         results.total++;
 
         // call_recordsシートで実際の文字起こし内容をチェック
@@ -2191,7 +2100,7 @@ function detectAndRecoverPartialFailures() {
           Logger.log('見逃しエラーを検知: Record ID ' + recordId + ' - ' + hasError.issue);
 
           // ステータスをERROR_DETECTEDに更新
-          sheet.getRange(i + 1, statusTranscriptionIndex + 1).setValue('ERROR_DETECTED');
+          sheet.getRange(i + 1, statusTranscriptionIndex + 1).setValue(Constants.STATUS.ERROR_DETECTED);
 
           // updated_atを更新
           if (updatedAtIndex !== -1) {
@@ -2366,18 +2275,14 @@ function runFullRecoveryProcess() {
  */
 function checkForErrorInTranscription(recordId) {
   try {
-    var sheet = SpreadsheetApp.openById(PROCESSED_SHEET_ID).getSheetByName('call_records');
-    if (!sheet) {
-      return { found: false, issue: 'call_recordsシートが見つかりません' };
-    }
-
+    var sheet = ConfigManager.getCallRecordsSheet();
     var data = sheet.getDataRange().getValues();
     var headers = data[0];
-    var recordIdIndex = headers.indexOf('record_id');
-    var transcriptionIndex = headers.indexOf('transcription');
+    var recordIdIndex = headers.indexOf(Constants.COLUMNS.CALL_RECORDS.RECORD_ID);
+    var transcriptionIndex = headers.indexOf(Constants.COLUMNS.CALL_RECORDS.TRANSCRIPTION);
 
     if (recordIdIndex === -1 || transcriptionIndex === -1) {
-      return { found: false, issue: '必要なカラムが見つかりません' };
+      return { found: false, issue: Constants.ERROR_MESSAGES.REQUIRED_COLUMNS_NOT_FOUND };
     }
 
     // 該当レコードを検索
@@ -2387,21 +2292,10 @@ function checkForErrorInTranscription(recordId) {
         var transcription = row[transcriptionIndex] || '';
 
         // エラーパターンをチェック
-        var errorPatterns = [
-          { pattern: 'insufficient_quota', issue: 'OpenAI APIクォータ制限' },
-          { pattern: 'You exceeded your current quota', issue: 'OpenAI APIクォータ制限' },
-          { pattern: '【文字起こし失敗:', issue: '文字起こし処理失敗' },
-          { pattern: 'GPT-4o-mini API呼び出しエラー', issue: 'GPT-4o-mini APIエラー' },
-          { pattern: 'OpenAI APIからのレスポンスエラー', issue: 'OpenAI APIレスポンスエラー' },
-          { pattern: 'エラー発生：', issue: '処理エラー' },
-          { pattern: '情報抽出に失敗しました', issue: '情報抽出エラー' },
-          { pattern: '不明（抽出エラー）', issue: '抽出エラー' },
-          { pattern: 'JSONの解析に失敗しました', issue: 'JSON解析エラー' }
-        ];
-
-        for (var j = 0; j < errorPatterns.length; j++) {
-          if (transcription.includes(errorPatterns[j].pattern)) {
-            return { found: true, issue: errorPatterns[j].issue };
+        for (var j = 0; j < Constants.ERROR_PATTERNS.length; j++) {
+          var errorPattern = Constants.ERROR_PATTERNS[j];
+          if (transcription.includes(errorPattern.pattern)) {
+            return { found: true, issue: errorPattern.issue };
           }
         }
 
@@ -2409,7 +2303,7 @@ function checkForErrorInTranscription(recordId) {
       }
     }
 
-    return { found: false, issue: 'レコードが見つかりません' };
+    return { found: false, issue: Constants.ERROR_MESSAGES.RECORD_NOT_FOUND };
 
   } catch (error) {
     Logger.log('文字起こし内容エラーチェック中にエラー: ' + error.toString());
