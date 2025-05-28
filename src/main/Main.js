@@ -1030,16 +1030,16 @@ function processBatch() {
       '処理時間=' + processingTime + '秒';
     Logger.log(summary);
 
-    // 管理者に通知メールを送信（部分的失敗が検知された場合のみ）
-    if (results.total > 0) {
+    // 管理者に通知メールを送信（エラーが発生した場合のみ）
+    if (results.error > 0) {
       try {
         var settings = getSystemSettings();
         var adminEmails = settings.ADMIN_EMAILS || [];
 
         for (var i = 0; i < adminEmails.length; i++) {
-          NotificationService.sendPartialFailureDetectionSummary(adminEmails[i], results);
+          NotificationService.sendRealtimeErrorNotification(adminEmails[i], results);
         }
-        Logger.log('部分的失敗検知結果の通知メールを送信しました');
+        Logger.log('リアルタイムエラー通知メールを送信しました');
       } catch (notificationError) {
         Logger.log('通知メール送信エラー: ' + notificationError.toString());
       }
@@ -1609,17 +1609,29 @@ function onOpen() {
 
   ui.createMenu('文字起こしシステム')
     .addItem('今すぐバッチ処理実行', 'processBatch')
-    .addItem('直近1時間の録音を取得', 'TriggerManager.fetchLastHourRecordings')
-    .addItem('直近2時間の録音を取得', 'TriggerManager.fetchLast2HoursRecordings')
-    .addItem('直近6時間の録音を取得', 'TriggerManager.fetchLast6HoursRecordings')
-    .addItem('直近24時間の録音を取得', 'TriggerManager.fetchLast24HoursRecordings')
-    .addItem('直近48時間の録音を取得', 'TriggerManager.fetchLast48HoursRecordings')
-    .addItem('すべての未処理録音を取得', 'TriggerManager.fetchAllPendingRecordings')
     .addSeparator()
-    .addItem('【特別対応】PENDINGの文字起こしを再処理', 'resetPendingTranscriptions')
-    .addItem('【特別対応】エラーフォルダのファイルを強制復旧', 'forceRecoverAllErrorFiles')
-    .addItem('【特別対応】特別復旧処理トリガーを設定', 'TriggerManager.setupRecoveryTriggers')
-    .addItem('【特別対応】特別復旧処理トリガーを削除', 'TriggerManager.removeRecoveryTriggers')
+    .addSubMenu(ui.createMenu('録音取得')
+      .addItem('直近1時間の録音を取得', 'TriggerManager.fetchLastHourRecordings')
+      .addItem('直近2時間の録音を取得', 'TriggerManager.fetchLast2HoursRecordings')
+      .addItem('直近6時間の録音を取得', 'TriggerManager.fetchLast6HoursRecordings')
+      .addItem('直近24時間の録音を取得', 'TriggerManager.fetchLast24HoursRecordings')
+      .addItem('直近48時間の録音を取得', 'TriggerManager.fetchLast48HoursRecordings')
+      .addItem('すべての未処理録音を取得', 'TriggerManager.fetchAllPendingRecordings'))
+    .addSeparator()
+    .addSubMenu(ui.createMenu('トリガー設定')
+      .addItem('🔧 全トリガー設定（復旧機能込み）', 'TriggerManager.setupAllTriggers')
+      .addItem('⚙️ 基本トリガーのみ設定', 'TriggerManager.setupBasicTriggers')
+      .addItem('🔄 復旧トリガーのみ追加', 'TriggerManager.setupRecoveryTriggersOnly')
+      .addSeparator()
+      .addItem('❌ 全トリガー削除', 'TriggerManager.deleteAllTriggers')
+      .addItem('❌ 復旧トリガーのみ削除', 'TriggerManager.removeRecoveryTriggers'))
+    .addSeparator()
+    .addSubMenu(ui.createMenu('復旧・メンテナンス')
+      .addItem('🔍 部分的失敗を検知・復旧', 'detectAndRecoverPartialFailures')
+      .addItem('🔄 PENDINGの文字起こしを再処理', 'resetPendingTranscriptions')
+      .addItem('📁 エラーフォルダのファイルを強制復旧', 'forceRecoverAllErrorFiles')
+      .addItem('⚠️ 中断ファイルを復旧', 'recoverInterruptedFiles')
+      .addItem('🚨 エラーファイルを復旧', 'recoverErrorFiles'))
     .addToUi();
 }
 
@@ -2136,116 +2148,75 @@ function forceRecoverAllErrorFiles() {
  * 文字起こしが SUCCESS になっているが、実際にはエラーが含まれているケースを検知
  */
 function detectAndRecoverPartialFailures() {
-  var startTime = new Date();
-  Logger.log('部分的失敗検知・復旧処理開始: ' + startTime);
+  Logger.log('見逃しエラー検知・復旧処理を開始します');
 
   try {
-    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
-    if (!spreadsheetId) {
-      throw new Error('Recordingsシートのスプレッドシートが設定されていません');
-    }
-
-    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    var sheet = spreadsheet.getSheetByName('Recordings');
-
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('recordings');
     if (!sheet) {
-      throw new Error('Recordingsシートが見つかりません');
+      Logger.log('recordingsシートが見つかりません');
+      return;
     }
 
-    var dataRange = sheet.getDataRange();
-    var values = dataRange.getValues();
-    var suspiciousRecords = [];
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var idIndex = headers.indexOf('id');
+    var statusTranscriptionIndex = headers.indexOf('status_transcription');
+    var updatedAtIndex = headers.indexOf('updated_at');
 
-    // ヘッダー行をスキップして2行目から処理
-    for (var i = 1; i < values.length; i++) {
-      var row = values[i];
-      var recordId = row[0]; // record_id
-      var statusTranscription = row[11]; // status_transcription
-
-      // SUCCESSになっているレコードをチェック
-      if (statusTranscription === 'SUCCESS') {
-        // call_recordsシートで実際の文字起こし内容をチェック
-        var transcriptionContent = getTranscriptionContentFromCallRecords(recordId);
-
-        if (transcriptionContent && isPartialFailure(transcriptionContent)) {
-          suspiciousRecords.push({
-            rowIndex: i + 1,
-            recordId: recordId,
-            timestamp: row[1], // timestamp_recording
-            issue: getFailureReason(transcriptionContent)
-          });
-        }
-      }
+    if (idIndex === -1 || statusTranscriptionIndex === -1) {
+      Logger.log('必要なカラムが見つかりません');
+      return;
     }
 
-    Logger.log('部分的失敗が疑われるレコード数: ' + suspiciousRecords.length);
-
-    if (suspiciousRecords.length === 0) {
-      return '部分的失敗が疑われるレコードはありませんでした。';
-    }
-
-    // 処理対象の記録
     var results = {
-      total: suspiciousRecords.length,
+      total: 0,
       recovered: 0,
       failed: 0,
       details: []
     };
 
-    // 部分的失敗レコードを処理
-    for (var i = 0; i < suspiciousRecords.length; i++) {
-      var record = suspiciousRecords[i];
+    // SUCCESSステータスのレコードを検査
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var recordId = row[idIndex];
+      var status = row[statusTranscriptionIndex];
 
-      try {
-        Logger.log('部分的失敗復旧処理: record_id=' + record.recordId + ', 問題=' + record.issue);
+      if (status === 'SUCCESS') {
+        results.total++;
 
-        var now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+        // call_recordsシートで実際の文字起こし内容をチェック
+        var hasError = checkForErrorInTranscription(recordId);
 
-        // ステータスをERRORに更新
-        updateTranscriptionStatusByRecordId(
-          record.recordId,
-          'ERROR_DETECTED: ' + record.issue,
-          now,
-          now
-        );
+        if (hasError.found) {
+          Logger.log('見逃しエラーを検知: Record ID ' + recordId + ' - ' + hasError.issue);
 
-        // 対応するファイルを検索してエラーフォルダに移動
-        var fileFound = moveFileToErrorFolder(record.recordId);
+          // ステータスをERROR_DETECTEDに更新
+          sheet.getRange(i + 1, statusTranscriptionIndex + 1).setValue('ERROR_DETECTED');
 
-        results.recovered++;
-        results.details.push({
-          recordId: record.recordId,
-          status: 'recovered',
-          issue: record.issue,
-          fileFound: fileFound,
-          message: 'エラーを検知してステータスを更新しました'
-        });
-      } catch (error) {
-        Logger.log('部分的失敗復旧エラー: ' + error.toString());
+          // updated_atを更新
+          if (updatedAtIndex !== -1) {
+            sheet.getRange(i + 1, updatedAtIndex + 1).setValue(new Date());
+          }
 
-        results.failed++;
-        results.details.push({
-          recordId: record.recordId,
-          status: 'error',
-          message: error.toString()
-        });
+          // ファイルをエラーフォルダに移動
+          var fileFound = moveFileToErrorFolder(recordId);
+
+          results.recovered++;
+          results.details.push({
+            recordId: recordId,
+            status: 'recovered',
+            issue: hasError.issue,
+            message: 'ステータスをERROR_DETECTEDに更新し、エラーフォルダに移動',
+            fileFound: fileFound
+          });
+        }
       }
     }
 
-    // 処理結果のログ出力
-    var endTime = new Date();
-    var processingTime = (endTime - startTime) / 1000; // 秒単位
+    Logger.log('見逃しエラー検知・復旧処理完了: 検査=' + results.total + '件, 検知・復旧=' + results.recovered + '件');
 
-    var summary = '部分的失敗検知・復旧処理完了: ' +
-      '対象=' + results.total + '件, ' +
-      '復旧=' + results.recovered + '件, ' +
-      '失敗=' + results.failed + '件, ' +
-      '処理時間=' + processingTime + '秒';
-
-    Logger.log(summary);
-
-    // 管理者に通知メールを送信（部分的失敗が検知された場合のみ）
-    if (results.total > 0) {
+    // 管理者に通知メールを送信（見逃しエラーが検知された場合のみ）
+    if (results.total > 0 && results.recovered > 0) {
       try {
         var settings = getSystemSettings();
         var adminEmails = settings.ADMIN_EMAILS || [];
@@ -2253,114 +2224,26 @@ function detectAndRecoverPartialFailures() {
         for (var i = 0; i < adminEmails.length; i++) {
           NotificationService.sendPartialFailureDetectionSummary(adminEmails[i], results);
         }
-        Logger.log('部分的失敗検知結果の通知メールを送信しました');
+        Logger.log('見逃しエラー検知結果の通知メールを送信しました');
       } catch (notificationError) {
         Logger.log('通知メール送信エラー: ' + notificationError.toString());
       }
     }
 
-    return summary;
+    return results;
+
   } catch (error) {
-    var errorMessage = '部分的失敗検知・復旧処理でエラー: ' + error.toString();
-    Logger.log(errorMessage);
-    return errorMessage;
+    Logger.log('見逃しエラー検知・復旧処理中にエラー: ' + error.toString());
+    return {
+      total: 0,
+      recovered: 0,
+      failed: 1,
+      details: [{
+        status: 'error',
+        message: error.toString()
+      }]
+    };
   }
-}
-
-/**
- * call_recordsシートから文字起こし内容を取得
- * @param {string} recordId - 録音ID
- * @return {string} - 文字起こし内容
- */
-function getTranscriptionContentFromCallRecords(recordId) {
-  try {
-    var processedSheetId = EnvironmentConfig.get('PROCESSED_SHEET_ID', '');
-    if (!processedSheetId) return null;
-
-    var spreadsheet = SpreadsheetApp.openById(processedSheetId);
-    var sheet = spreadsheet.getSheetByName('call_records');
-
-    if (!sheet) return null;
-
-    var dataRange = sheet.getDataRange();
-    var values = dataRange.getValues();
-
-    // ヘッダー行をスキップして2行目から処理
-    for (var i = 1; i < values.length; i++) {
-      var row = values[i];
-      // record_idカラム（2列目）をチェック
-      if (row[1] === recordId) {
-        // transcriptionカラム（最後の列）を返す
-        return row[row.length - 1] || '';
-      }
-    }
-
-    return null;
-  } catch (error) {
-    Logger.log('文字起こし内容取得エラー: ' + error.toString());
-    return null;
-  }
-}
-
-/**
- * 部分的失敗かどうかを判定
- * @param {string} transcriptionContent - 文字起こし内容
- * @return {boolean} - 部分的失敗の場合true
- */
-function isPartialFailure(transcriptionContent) {
-  if (!transcriptionContent) return false;
-
-  var errorPatterns = [
-    '【文字起こし失敗:',
-    'GPT-4o-mini API呼び出しエラー',
-    'OpenAI APIからのレスポンスエラー',
-    'insufficient_quota',
-    'You exceeded your current quota',
-    'エラー発生：',
-    '情報抽出に失敗しました',
-    '不明（抽出エラー）',
-    'JSONの解析に失敗しました'
-  ];
-
-  for (var i = 0; i < errorPatterns.length; i++) {
-    if (transcriptionContent.includes(errorPatterns[i])) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
- * 失敗理由を特定
- * @param {string} transcriptionContent - 文字起こし内容
- * @return {string} - 失敗理由
- */
-function getFailureReason(transcriptionContent) {
-  if (!transcriptionContent) return '不明なエラー';
-
-  if (transcriptionContent.includes('insufficient_quota') ||
-    transcriptionContent.includes('You exceeded your current quota')) {
-    return 'OpenAI APIクォータ制限';
-  }
-
-  if (transcriptionContent.includes('GPT-4o-mini API呼び出しエラー')) {
-    return 'GPT-4o-mini APIエラー';
-  }
-
-  if (transcriptionContent.includes('OpenAI APIからのレスポンスエラー')) {
-    return 'OpenAI APIレスポンスエラー';
-  }
-
-  if (transcriptionContent.includes('情報抽出に失敗しました')) {
-    return '情報抽出エラー';
-  }
-
-  if (transcriptionContent.includes('JSONの解析に失敗しました')) {
-    return 'JSON解析エラー';
-  }
-
-  return '部分的処理失敗';
 }
 
 /**
@@ -2403,5 +2286,133 @@ function moveFileToErrorFolder(recordId) {
   } catch (error) {
     Logger.log('ファイル移動エラー: ' + error.toString());
     return false;
+  }
+}
+
+/**
+ * 全トリガー設定（復旧機能込み）- Apps Script直接実行用
+ * @return {string} 実行結果メッセージ
+ */
+function setupAllTriggersWithRecovery() {
+  return TriggerManager.setupAllTriggers(true);
+}
+
+/**
+ * 基本トリガーのみ設定 - Apps Script直接実行用
+ * @return {string} 実行結果メッセージ
+ */
+function setupBasicTriggersOnly() {
+  return TriggerManager.setupBasicTriggers();
+}
+
+/**
+ * 復旧トリガーのみ追加 - Apps Script直接実行用
+ * @return {string} 実行結果メッセージ
+ */
+function addRecoveryTriggersOnly() {
+  return TriggerManager.setupRecoveryTriggersOnly();
+}
+
+/**
+ * 全復旧処理を一括実行 - Apps Script直接実行用
+ * 部分的失敗検知 → PENDING復旧 → エラーファイル復旧の順で実行
+ * @return {string} 実行結果メッセージ
+ */
+function runFullRecoveryProcess() {
+  var startTime = new Date();
+  Logger.log('全復旧処理開始: ' + startTime);
+
+  var results = [];
+
+  try {
+    // 1. 部分的失敗検知・復旧
+    Logger.log('1. 部分的失敗検知・復旧を実行中...');
+    var partialResult = detectAndRecoverPartialFailures();
+    results.push('部分的失敗検知: ' + partialResult);
+
+    // 2. PENDING状態リセット
+    Logger.log('2. PENDING状態リセットを実行中...');
+    var pendingResult = resetPendingTranscriptions();
+    results.push('PENDING復旧: ' + pendingResult);
+
+    // 3. エラーファイル復旧
+    Logger.log('3. エラーファイル復旧を実行中...');
+    var errorResult = recoverErrorFiles();
+    results.push('エラーファイル復旧: ' + errorResult);
+
+    // 4. 中断ファイル復旧
+    Logger.log('4. 中断ファイル復旧を実行中...');
+    var interruptedResult = recoverInterruptedFiles();
+    results.push('中断ファイル復旧: ' + interruptedResult);
+
+    var endTime = new Date();
+    var processingTime = (endTime - startTime) / 1000;
+
+    var summary = '全復旧処理完了（処理時間: ' + processingTime + '秒）\\n\\n' + results.join('\\n');
+    Logger.log(summary);
+
+    return summary;
+  } catch (error) {
+    var errorMessage = '全復旧処理中にエラー: ' + error.toString();
+    Logger.log(errorMessage);
+    return errorMessage;
+  }
+}
+
+/**
+ * call_recordsシートで文字起こし内容にエラーが含まれているかチェック
+ * @param {string} recordId - 録音ID
+ * @return {Object} - {found: boolean, issue: string}
+ */
+function checkForErrorInTranscription(recordId) {
+  try {
+    var sheet = SpreadsheetApp.openById(PROCESSED_SHEET_ID).getSheetByName('call_records');
+    if (!sheet) {
+      return { found: false, issue: 'call_recordsシートが見つかりません' };
+    }
+
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var recordIdIndex = headers.indexOf('record_id');
+    var transcriptionIndex = headers.indexOf('transcription');
+
+    if (recordIdIndex === -1 || transcriptionIndex === -1) {
+      return { found: false, issue: '必要なカラムが見つかりません' };
+    }
+
+    // 該当レコードを検索
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      if (row[recordIdIndex] === recordId) {
+        var transcription = row[transcriptionIndex] || '';
+
+        // エラーパターンをチェック
+        var errorPatterns = [
+          { pattern: 'insufficient_quota', issue: 'OpenAI APIクォータ制限' },
+          { pattern: 'You exceeded your current quota', issue: 'OpenAI APIクォータ制限' },
+          { pattern: '【文字起こし失敗:', issue: '文字起こし処理失敗' },
+          { pattern: 'GPT-4o-mini API呼び出しエラー', issue: 'GPT-4o-mini APIエラー' },
+          { pattern: 'OpenAI APIからのレスポンスエラー', issue: 'OpenAI APIレスポンスエラー' },
+          { pattern: 'エラー発生：', issue: '処理エラー' },
+          { pattern: '情報抽出に失敗しました', issue: '情報抽出エラー' },
+          { pattern: '不明（抽出エラー）', issue: '抽出エラー' },
+          { pattern: 'JSONの解析に失敗しました', issue: 'JSON解析エラー' }
+        ];
+
+        for (var j = 0; j < errorPatterns.length; j++) {
+          if (transcription.includes(errorPatterns[j].pattern)) {
+            return { found: true, issue: errorPatterns[j].issue };
+          }
+        }
+
+        return { found: false, issue: null };
+      }
+    }
+
+    return { found: false, issue: 'レコードが見つかりません' };
+
+  } catch (error) {
+    Logger.log('文字起こし内容エラーチェック中にエラー: ' + error.toString());
+    return { found: false, issue: 'チェック処理エラー' };
   }
 }

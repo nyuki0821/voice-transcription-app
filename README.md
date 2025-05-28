@@ -205,71 +205,106 @@ voice-transcription-app/
 | ZOOM_WEBHOOK_SECRET | Webhook検証用シークレット |
 | RETENTION_DAYS | ファイル保持日数（デフォルト90日) |
 
-## トリガー構成とバッチ処理一覧
+## トリガー設定・管理
 
-このアプリケーションでは、以下のトリガーとバッチ処理を使用しています。
+### 包括的トリガー設定
 
-### トリガー設定関数
+#### 1. **全トリガー設定（推奨）**
+```javascript
+// 復旧機能も含めた全トリガーを設定（デフォルト）
+TriggerManager.setupAllTriggers();
+// または明示的に
+TriggerManager.setupAllTriggers(true);
 
-| 設定関数名 | 設定内容 | ファイル |
-|------------|----------|----------|
-| `setupZoomTriggers()` | Zoom録音関連の全トリガー設定 | `TriggerManager.js` |
-| `setupTranscriptionTriggers()` | 文字起こし関連の全トリガー設定 | `TriggerManager.js` |
-| `setupDailyZoomApiTokenRefresh()` | Zoom APIトークン更新トリガー | `TriggerManager.js` |
-| `setupRecordingsSheetTrigger()` | Recordingsシート処理トリガー | `TriggerManager.js` |
-| `setupAllTriggers()` | 全てのアプリケーショントリガーを一括設定 | `TriggerManager.js` |
+// Apps Script直接実行用
+setupAllTriggersWithRecovery();
+```
 
-### バッチ処理一覧
+**設定されるトリガー:**
+- Zoom録音取得（30分ごと）
+- 文字起こし処理（10分ごと）
+- Zoomトークン更新（毎日6:00）
+- Recordingsシート監視（1時間ごと）
+- 部分的失敗検知（毎日22:00）
+- 中断ファイル復旧（5分ごと）
+- PENDING復旧（2時間ごと）
+- エラーファイル復旧（4時間ごと）
 
-| 実行関数名 | タイミング | 役割 | 設定元 |
-|------------|------------|------|--------|
-| `processRecordingsFromSheet()` | 30分ごと | Recordingsシートから未処理録音を取得 | `setupZoomTriggers()` |
-| `fetchZoomRecordingsMorningBatch()` | 毎朝6:15 | 前日深夜〜当日朝までの録音を取得 | `setupZoomTriggers()` |
-| `purgeOldRecordings()` | 日曜03:00 | 90日超過ファイルの削除 | `setupZoomTriggers()` |
-| `refreshZoomAPIToken()` | 毎朝5:00 | Zoom APIトークンの更新 | `setupDailyZoomApiTokenRefresh()` |
-| `startDailyProcess()` | 毎朝6:00 | 文字起こし処理の有効化 | `setupTranscriptionTriggers()` |
-| `processBatchOnSchedule()` | 10分ごと | 文字起こし処理の定期実行(6:00-24:00) | `setupTranscriptionTriggers()` |
-| `sendDailySummary()` | 毎日19:00 | 日次サマリーメールの送信 | `setupTranscriptionTriggers()` |
+#### 2. **基本トリガーのみ設定**
+```javascript
+// 復旧機能を除いた基本機能のみ
+TriggerManager.setupBasicTriggers();
 
-### 手動実行関数
+// Apps Script直接実行用
+setupBasicTriggersOnly();
+```
 
-| 関数名 | 目的 | 備考 |
-|--------|------|------|
-| `fetchZoomRecordingsManually(hours)` | 指定時間の録音を手動取得 | 時間範囲指定可 |
-| `fetchLastHourRecordings()` | 直近1時間の録音を取得 | `fetchZoomRecordingsManually(1)` |
-| `fetchLast2HoursRecordings()` | 直近2時間の録音を取得 | `fetchZoomRecordingsManually(2)` |
-| `fetchLast6HoursRecordings()` | 直近6時間の録音を取得 | `fetchZoomRecordingsManually(6)` |
-| `fetchLast24HoursRecordings()` | 直近24時間の録音を取得 | `fetchZoomRecordingsManually(24)` |
-| `fetchLast48HoursRecordings()` | 直近48時間の録音を取得 | `fetchZoomRecordingsManually(48)` |
-| `fetchAllPendingRecordings()` | 全ての未処理録音を取得 | `fetchZoomRecordingsManually()` |
-| `manualSendDailySummary(dateStr)` | 日次サマリーを手動送信 | 日付指定可 |
-| `stopDailyProcess()` | 文字起こし処理を停止 | 処理フラグをオフ |
+**設定されるトリガー:**
+- Zoom録音取得（30分ごと）
+- 文字起こし処理（10分ごと）
+- Zoomトークン更新（毎日6:00）
+- Recordingsシート監視（1時間ごと）
+- 部分的失敗検知（毎日22:00）
 
-### トリガー管理関数
+#### 3. **復旧トリガーのみ追加**
+```javascript
+// 既存のトリガーに復旧機能を追加
+TriggerManager.setupRecoveryTriggersOnly();
 
-| 関数名 | 目的 | 備考 |
-|--------|------|------|
-| `deleteAllTriggers()` | 全てのトリガーを一括削除 | 注意：全てのトリガーが削除されます |
-| `deleteTriggersWithNameContaining(functionNamePart)` | 特定の名前を含むトリガーのみ削除 | 部分一致で削除 |
+// Apps Script直接実行用
+addRecoveryTriggersOnly();
+```
 
-### 通常運用の流れ
+**追加されるトリガー:**
+- 中断ファイル復旧（5分ごと）
+- PENDING復旧（2時間ごと）
+- エラーファイル復旧（4時間ごと）
 
-1. **初期セットアップ時**:
-   ```javascript
-   TriggerManager.setupAllTriggers();  // 全てのトリガーを一括設定
-   ```
+### スプレッドシートメニューからの設定
 
-2. **トリガーに問題が発生した場合**:
-   ```javascript
-   TriggerManager.deleteAllTriggers();  // 全てのトリガーをリセット
-   TriggerManager.setupAllTriggers();  // 再設定
-   ```
+1. **設定スプレッドシートを開く**
+2. **メニューバー** → **文字起こしシステム** → **トリガー設定**
+3. 以下から選択：
+   - **🔧 全トリガー設定（復旧機能込み）** ← **推奨**
+   - **⚙️ 基本トリガーのみ設定**
+   - **🔄 復旧トリガーのみ追加**
 
-3. **特定のバッチのみ手動実行する場合**:
-   ```javascript
-   TriggerManager.fetchLast24HoursRecordings();  // 直近24時間分の録音取得
-   manualSendDailySummary();  // 本日分のサマリー送信
-   ```
+### トリガー削除
+
+```javascript
+// 全トリガー削除
+TriggerManager.deleteAllTriggers();
+
+// 復旧トリガーのみ削除
+TriggerManager.removeRecoveryTriggers();
+```
+
+### 運用シナリオ別推奨設定
+
+#### **通常運用時**
+```javascript
+// 全機能を有効にして安定運用
+TriggerManager.setupAllTriggers();
+```
+
+#### **問題が少ない安定期**
+```javascript
+// 基本機能のみで軽量運用
+TriggerManager.setupBasicTriggers();
+```
+
+#### **問題が多発している時**
+```javascript
+// 基本設定 + 復旧機能を強化
+TriggerManager.setupBasicTriggers();
+TriggerManager.setupRecoveryTriggersOnly();
+```
+
+#### **メンテナンス時**
+```javascript
+// 全復旧処理を一括実行
+runFullRecoveryProcess();
+```
 
 ## 料金モデルと運用コスト
 

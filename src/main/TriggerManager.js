@@ -6,22 +6,34 @@
 // TriggerManager名前空間を定義
 var TriggerManager = (function () {
   return {
+    // 基本トリガー設定
     setupZoomTriggers: setupZoomTriggers,
     setupTranscriptionTriggers: setupTranscriptionTriggers,
     setupDailyZoomApiTokenRefresh: setupDailyZoomApiTokenRefresh,
     setupRecordingsSheetTrigger: setupRecordingsSheetTrigger,
+    setupPartialFailureDetectionTrigger: setupPartialFailureDetectionTrigger,
+
+    // 包括的トリガー設定
     setupAllTriggers: setupAllTriggers,
+    setupBasicTriggers: setupBasicTriggers,
+    setupRecoveryTriggersOnly: setupRecoveryTriggersOnly,
+
+    // 復旧トリガー設定（個別）
+    setupRecoveryTriggers: setupRecoveryTriggers,
+    removeRecoveryTriggers: removeRecoveryTriggers,
+    setupInterruptedFilesRecoveryTrigger: setupInterruptedFilesRecoveryTrigger,
+
+    // トリガー管理
     deleteTriggersWithNameContaining: deleteTriggersWithNameContaining,
     deleteAllTriggers: deleteAllTriggers,
+
+    // 手動録音取得
     fetchLastHourRecordings: fetchLastHourRecordings,
     fetchLast2HoursRecordings: fetchLast2HoursRecordings,
     fetchLast6HoursRecordings: fetchLast6HoursRecordings,
     fetchLast24HoursRecordings: fetchLast24HoursRecordings,
     fetchLast48HoursRecordings: fetchLast48HoursRecordings,
-    fetchAllPendingRecordings: fetchAllPendingRecordings,
-    setupRecoveryTriggers: setupRecoveryTriggers,
-    removeRecoveryTriggers: removeRecoveryTriggers,
-    setupPartialFailureDetectionTrigger: setupPartialFailureDetectionTrigger
+    fetchAllPendingRecordings: fetchAllPendingRecordings
   };
 })();
 
@@ -145,22 +157,102 @@ function setupRecordingsSheetTrigger() {
 }
 
 /**
- * 全てのトリガーをセットアップする
+ * 全てのトリガーをセットアップする（復旧機能も含む）
  * すべてのアプリケーショントリガーを一括で設定
+ * @param {boolean} includeRecovery - 復旧トリガーも含めるかどうか（デフォルト: true）
  */
-function setupAllTriggers() {
-  // 既存のトリガーを削除
-  removeAllProjectTriggers();
+function setupAllTriggers(includeRecovery) {
+  // デフォルトで復旧トリガーも含める
+  if (includeRecovery === undefined) {
+    includeRecovery = true;
+  }
 
-  // 各機能のトリガーを設定
-  setupZoomTriggers();
-  setupTranscriptionTriggers();
-  setupDailyZoomApiTokenRefresh();
-  setupRecordingsSheetTrigger();
-  setupInterruptedFilesRecoveryTrigger();
-  setupPartialFailureDetectionTrigger();
+  try {
+    Logger.log('全トリガー設定開始（復旧トリガー含む: ' + includeRecovery + '）');
 
-  Logger.log('全トリガーが正常に設定されました');
+    // 既存のトリガーを削除
+    removeAllProjectTriggers();
+
+    // 基本機能のトリガーを設定
+    setupZoomTriggers();
+    setupTranscriptionTriggers();
+    setupDailyZoomApiTokenRefresh();
+    setupRecordingsSheetTrigger();
+    setupPartialFailureDetectionTrigger();
+
+    // 復旧機能のトリガーを設定（オプション）
+    if (includeRecovery) {
+      setupInterruptedFilesRecoveryTrigger();
+      setupRecoveryTriggers();
+      Logger.log('復旧トリガーも設定しました');
+    }
+
+    var message = '全トリガーが正常に設定されました（復旧トリガー含む: ' + includeRecovery + '）';
+    Logger.log(message);
+    return message;
+  } catch (error) {
+    var errorMessage = '全トリガー設定中にエラー: ' + error.toString();
+    Logger.log(errorMessage);
+    logAndNotifyError(error, "全トリガー設定");
+    return errorMessage;
+  }
+}
+
+/**
+ * 基本トリガーのみをセットアップする（復旧機能は含まない）
+ * 通常運用時の最小限のトリガー設定
+ */
+function setupBasicTriggers() {
+  try {
+    Logger.log('基本トリガー設定開始');
+
+    // 既存のトリガーを削除
+    removeAllProjectTriggers();
+
+    // 基本機能のトリガーのみを設定
+    setupZoomTriggers();
+    setupTranscriptionTriggers();
+    setupDailyZoomApiTokenRefresh();
+    setupRecordingsSheetTrigger();
+    setupPartialFailureDetectionTrigger();
+
+    var message = '基本トリガーが正常に設定されました（復旧トリガーは除く）';
+    Logger.log(message);
+    return message;
+  } catch (error) {
+    var errorMessage = '基本トリガー設定中にエラー: ' + error.toString();
+    Logger.log(errorMessage);
+    logAndNotifyError(error, "基本トリガー設定");
+    return errorMessage;
+  }
+}
+
+/**
+ * 復旧トリガーのみをセットアップする
+ * 問題が多発している時の追加設定
+ */
+function setupRecoveryTriggersOnly() {
+  try {
+    Logger.log('復旧トリガーのみ設定開始');
+
+    // 復旧関連のトリガーのみを削除
+    deleteTriggerByFunctionName('recoverInterruptedFiles');
+    deleteTriggerByFunctionName('resetPendingTranscriptions');
+    deleteTriggerByFunctionName('forceRecoverAllErrorFiles');
+
+    // 復旧機能のトリガーを設定
+    setupInterruptedFilesRecoveryTrigger();
+    setupRecoveryTriggers();
+
+    var message = '復旧トリガーのみが正常に設定されました';
+    Logger.log(message);
+    return message;
+  } catch (error) {
+    var errorMessage = '復旧トリガー設定中にエラー: ' + error.toString();
+    Logger.log(errorMessage);
+    logAndNotifyError(error, "復旧トリガー設定");
+    return errorMessage;
+  }
 }
 
 /**
@@ -435,23 +527,23 @@ function removeRecoveryTriggers() {
 
 /**
  * 部分的失敗検知・復旧のトリガーを設定する
- * 毎日22:00に実行して、SUCCESSになっているが実際にはエラーが含まれているレコードを検知・復旧
+ * 見逃しエラー検知（毎日22:00）
  */
 function setupPartialFailureDetectionTrigger() {
   try {
     deleteTriggersWithNameContaining('detectAndRecoverPartialFailures');
 
-    // 毎日22:00に部分的失敗検知・復旧を実行
+    // 見逃しエラー検知（毎日22:00）
     ScriptApp.newTrigger('detectAndRecoverPartialFailures')
       .timeBased()
-      .atHour(22)
-      .nearMinute(0)
       .everyDays(1)
+      .atHour(22)
       .create();
+    Logger.log('見逃しエラー検知トリガーを設定しました（毎日22:00）');
 
-    return "部分的失敗検知・復旧トリガーを設定しました（毎日22:00）";
+    return "見逃しエラー検知トリガーを設定しました（毎日22:00）";
   } catch (error) {
-    logAndNotifyError(error, "部分的失敗検知トリガー設定");
+    logAndNotifyError(error, "見逃しエラー検知トリガー設定");
     return "エラーが発生しました: " + error.toString();
   }
 } 
