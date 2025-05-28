@@ -7,6 +7,9 @@
  * - ConfigManager (src/core/ConfigManager.js)
  * - Constants (src/core/Constants.js)
  * - FileMovementService (src/core/FileMovementService.js)
+ * - ErrorHandler (src/core/ErrorHandler.js)
+ * - RecoveryService (src/core/RecoveryService.js)
+ * - PartialFailureDetector (src/core/PartialFailureDetector.js)
  * - TriggerManager (src/main/TriggerManager.js)
  * - ZoomphoneProcessor (src/zoom/ZoomphoneProcessor.js)
  * - NotificationService (src/core/NotificationService.js)
@@ -1022,151 +1025,7 @@ function processBatch() {
  * AppScriptの制限により中断されたファイルを復旧する
  */
 function recoverInterruptedFiles() {
-  var startTime = new Date();
-  Logger.log('中断ファイル復旧処理開始: ' + startTime);
-
-  try {
-    // 設定を取得
-    var localSettings = getSystemSettings();
-
-    if (!localSettings.PROCESSING_FOLDER_ID) {
-      throw new Error('処理中フォルダIDが設定されていません');
-    }
-
-    if (!localSettings.SOURCE_FOLDER_ID) {
-      throw new Error('処理対象フォルダIDが設定されていません');
-    }
-
-    // 処理中フォルダのファイルを取得
-    var processingFolder = DriveApp.getFolderById(localSettings.PROCESSING_FOLDER_ID);
-    var files = processingFolder.getFiles();
-    var interruptedFiles = [];
-
-    while (files.hasNext()) {
-      var file = files.next();
-      var mimeType = file.getMimeType() || "";
-
-      // 音声ファイルのみを対象とする
-      if (mimeType.indexOf('audio/') === 0 ||
-        mimeType === 'application/octet-stream' ||
-        file.getName().toLowerCase().indexOf('.mp3') !== -1) {
-        interruptedFiles.push(file);
-      }
-    }
-
-    // Recordingsシートで既にINTERRUPTEDステータスになっているファイルも復旧対象に追加
-    var recordingsInterruptedFiles = getInterruptedFilesFromSheet();
-    if (recordingsInterruptedFiles && recordingsInterruptedFiles.length > 0) {
-      Logger.log('Recordingsシートから追加の中断ファイル数: ' + recordingsInterruptedFiles.length);
-      interruptedFiles = interruptedFiles.concat(recordingsInterruptedFiles);
-    }
-
-    Logger.log('中断された可能性のあるファイル数: ' + interruptedFiles.length);
-
-    if (interruptedFiles.length === 0) {
-      return '中断されたファイルはありませんでした。';
-    }
-
-    // 復旧結果のトラッキング
-    var results = {
-      total: interruptedFiles.length,
-      recovered: 0,
-      failed: 0,
-      recordIdFound: 0,
-      recordIdNotFound: 0,
-      details: []
-    };
-
-    // ファイルを復旧
-    for (var i = 0; i < interruptedFiles.length; i++) {
-      var file = interruptedFiles[i];
-
-      try {
-        Logger.log('ファイル復旧処理: ' + file.getName());
-
-        // ファイル名からrecord_idを抽出する試み
-        var recordId = null;
-
-        // まず、メタデータから取得を試みる
-        var metadata = extractMetadataFromFile(file.getName());
-        if (metadata && metadata.recordId) {
-          recordId = metadata.recordId;
-          results.recordIdFound++;
-          Logger.log('メタデータからrecord_idを取得: ' + recordId);
-        }
-        // メタデータからの取得に失敗した場合、ファイル名からのパターン抽出を試みる
-        else {
-          // ファイル名からのrecord_id抽出パターン（例：zoom_call_20250512014720_7ca69b8c0349417cb98159a24b91c937.mp3）
-          var fileNamePattern = /.*_([a-f0-9]{32}|[a-f0-9-]{36})\.mp3$/i;
-          var matches = file.getName().match(fileNamePattern);
-
-          if (matches && matches.length > 1) {
-            recordId = matches[1];
-            results.recordIdFound++;
-            Logger.log('ファイル名パターンからrecord_idを取得: ' + recordId);
-          } else {
-            results.recordIdNotFound++;
-            Logger.log('record_idを特定できませんでした: ' + file.getName());
-          }
-        }
-
-        // 状態を更新
-        if (recordId) {
-          // Recordingsシートの文字起こし状態を更新 (PENDING - 再処理対象として)
-          updateTranscriptionStatusByRecordId(
-            recordId,
-            'PENDING',
-            '',
-            Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
-          );
-        } else {
-          // recordIdが取得できなくても処理は続行する
-          Logger.log('警告: record_idが特定できないため、Recordingsシートの状態更新をスキップします');
-        }
-
-        // ファイルを未処理フォルダに移動
-        FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
-
-        // 結果を記録
-        results.recovered++;
-        results.details.push({
-          fileName: file.getName(),
-          recordId: recordId || 'unknown',
-          status: 'recovered',
-          message: '未処理フォルダに復旧しました' + (recordId ? '' : '（record_id不明）')
-        });
-      } catch (error) {
-        Logger.log('ファイル復旧エラー: ' + error.toString());
-
-        results.failed++;
-        results.details.push({
-          fileName: file.getName(),
-          status: 'error',
-          message: error.toString()
-        });
-      }
-    }
-
-    // 処理結果のログ出力
-    var endTime = new Date();
-    var processingTime = (endTime - startTime) / 1000; // 秒単位
-
-    var summary = '中断ファイル復旧処理完了: ' +
-      '対象=' + results.total + '件, ' +
-      '復旧=' + results.recovered + '件, ' +
-      '失敗=' + results.failed + '件, ' +
-      'ID特定=' + results.recordIdFound + '件, ' +
-      'ID不明=' + results.recordIdNotFound + '件, ' +
-      '処理時間=' + processingTime + '秒';
-
-    Logger.log(summary);
-    return summary;
-
-  } catch (error) {
-    var errorMessage = '中断ファイル復旧処理でエラーが発生: ' + error.toString();
-    Logger.log(errorMessage);
-    return errorMessage;
-  }
+  return RecoveryService.recoverInterruptedFiles();
 }
 
 /**
@@ -1336,17 +1195,17 @@ function startDailyProcess() {
  * このスクリプトのデフォルト実行関数
  */
 function main() {
-  try {
+  return ErrorHandler.safeExecute(function () {
     Logger.log('メイン処理スタート: ' + new Date().toString());
 
     // 0. 中断されたファイルの復旧処理
     Logger.log('中断されたファイルの復旧処理を開始します...');
-    var recoveryResult = recoverInterruptedFiles();
+    var recoveryResult = RecoveryService.recoverInterruptedFiles();
     Logger.log('中断ファイル復旧結果: ' + recoveryResult);
 
     // 0-2. エラーファイルの復旧処理（1回限りのリトライ）
     Logger.log('エラーファイルの復旧処理を開始します...');
-    var errorRecoveryResult = recoverErrorFiles();
+    var errorRecoveryResult = RecoveryService.recoverErrorFiles();
     Logger.log('エラーファイル復旧結果: ' + errorRecoveryResult);
 
     // 1. Zoom録音ファイルの取得処理
@@ -1359,11 +1218,10 @@ function main() {
 
     Logger.log('メイン処理完了: ' + new Date().toString());
     return '処理完了';
-  } catch (error) {
-    // エラーハンドリング
-    Logger.log('エラー発生: ' + error.toString());
-    return 'エラー発生: ' + error.toString();
-  }
+  }, 'メイン処理', {
+    maxRetries: 0,
+    category: ErrorHandler.ERROR_CATEGORIES.SYSTEM
+  });
 }
 
 /**
@@ -1604,304 +1462,14 @@ function onOpen() {
  * エラーになったファイルを1回だけリトライする
  */
 function recoverErrorFiles() {
-  var startTime = new Date();
-  Logger.log('エラーファイル復旧処理開始: ' + startTime);
-
-  try {
-    // 設定を取得
-    var config = ConfigManager.getConfig();
-
-    if (!config.ERROR_FOLDER_ID) {
-      throw new Error('エラーフォルダIDが設定されていません');
-    }
-
-    if (!config.SOURCE_FOLDER_ID) {
-      throw new Error('処理対象フォルダIDが設定されていません');
-    }
-
-    // エラーフォルダのファイルを取得
-    var errorFolder = ConfigManager.getFolder('ERROR');
-    var files = errorFolder.getFiles();
-    var errorFiles = [];
-
-    while (files.hasNext()) {
-      var file = files.next();
-
-      // 音声ファイルのみを対象とする
-      if (Constants.isAudioFile(file)) {
-        errorFiles.push(file);
-
-        // ファイルの説明を取得してリトライ済みかチェック
-        var description = file.getDescription() || "";
-        var hasRetried = description.indexOf(Constants.RETRY_MARKS.RETRIED) >= 0;
-
-        if (hasRetried) {
-          Logger.log('リトライ済みのファイルも含めて処理: ' + file.getName());
-        }
-      }
-    }
-
-    Logger.log('リトライ対象のエラーファイル数: ' + errorFiles.length);
-
-    if (errorFiles.length === 0) {
-      return 'リトライ対象のエラーファイルはありませんでした。';
-    }
-
-    // 復旧結果のトラッキング
-    var results = FileMovementService.createResultObject();
-    results.total = errorFiles.length;
-
-    // ファイルを復旧
-    for (var i = 0; i < errorFiles.length; i++) {
-      var file = errorFiles[i];
-
-      try {
-        Logger.log('エラーファイル復旧処理: ' + file.getName());
-
-        // ファイルからメタデータを取得
-        var metadata = extractMetadataFromFile(file.getName());
-
-        if (metadata && metadata.recordId) {
-          // Recordingsシートの文字起こし状態を更新 (RETRY)
-          updateTranscriptionStatusByRecordId(
-            metadata.recordId,
-            Constants.STATUS.RETRY,
-            '',
-            Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
-          );
-        }
-
-        // ファイルを未処理フォルダに移動（リトライマーク付き）
-        FileMovementService.moveFileWithFallback(
-          file,
-          config.SOURCE_FOLDER_ID,
-          Constants.RETRY_MARKS.RETRIED
-        );
-
-        // 結果を記録
-        FileMovementService.addSuccessResult(
-          results,
-          file.getName(),
-          metadata ? metadata.recordId : null,
-          'エラーファイルを未処理フォルダに復旧しました（1回限りのリトライ）'
-        );
-
-      } catch (error) {
-        Logger.log('エラーファイル復旧処理エラー: ' + error.toString());
-
-        FileMovementService.addFailureResult(
-          results,
-          file.getName(),
-          null,
-          error.toString()
-        );
-      }
-    }
-
-    // 処理結果のログ出力
-    return FileMovementService.logProcessingResult(startTime, results, 'エラーファイル復旧処理');
-
-  } catch (error) {
-    var errorMessage = 'エラーファイル復旧処理でエラーが発生: ' + error.toString();
-    Logger.log(errorMessage);
-    return errorMessage;
-  }
+  return RecoveryService.recoverErrorFiles();
 }
 
 /**
  * 特別復旧処理: PENDINGステータスのままになっている文字起こしを再処理
  */
 function resetPendingTranscriptions() {
-  var startTime = new Date();
-  Logger.log('PENDING状態の文字起こし復旧処理開始: ' + startTime);
-
-  try {
-    var spreadsheetId = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
-    if (!spreadsheetId) {
-      throw new Error('Recordingsシートのスプレッドシートが設定されていません');
-    }
-
-    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    var sheet = spreadsheet.getSheetByName('Recordings');
-
-    if (!sheet) {
-      throw new Error('Recordingsシートが見つかりません');
-    }
-
-    var dataRange = sheet.getDataRange();
-    var values = dataRange.getValues();
-    var pendingRecords = [];
-
-    // ヘッダー行をスキップして2行目から処理
-    for (var i = 1; i < values.length; i++) {
-      var row = values[i];
-      // status_transcription（12列目）をチェック
-      if (row[11] === 'PENDING') {
-        pendingRecords.push({
-          rowIndex: i + 1, // スプレッドシートの行番号（1始まり）
-          recordId: row[0], // record_id
-          timestamp: row[1] // timestamp_recording
-        });
-      }
-    }
-
-    Logger.log('PENDING状態の文字起こしレコード数: ' + pendingRecords.length);
-
-    if (pendingRecords.length === 0) {
-      return 'PENDING状態の文字起こしレコードはありませんでした。';
-    }
-
-    // 処理対象の記録
-    var results = {
-      total: pendingRecords.length,
-      reset: 0,
-      failed: 0,
-      details: []
-    };
-
-    // PENDINGレコードを処理
-    for (var i = 0; i < pendingRecords.length; i++) {
-      var record = pendingRecords[i];
-
-      try {
-        Logger.log('PENDING文字起こし処理: record_id=' + record.recordId);
-
-        // タイムスタンプを更新して再処理をトリガー
-        var now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
-
-        // 処理状態を一旦RESETにして再処理を促す
-        updateTranscriptionStatusByRecordId(
-          record.recordId,
-          'RESET_PENDING',
-          now,
-          now
-        );
-
-        // ドライブ内でファイルを検索
-        var recordIdPattern = new RegExp(record.recordId);
-        var files = DriveApp.searchFiles('fullText contains "' + record.recordId + '" and mimeType contains "audio"');
-        var fileFound = false;
-
-        // ファイルが見つからない場合、より広い範囲で検索を試みる
-        if (!files.hasNext()) {
-          // ファイル名で検索
-          var fileNamePattern = record.recordId;
-          Logger.log('ファイル名による再検索: ' + fileNamePattern);
-          files = DriveApp.searchFiles('title contains "' + fileNamePattern + '"');
-        }
-
-        // 各フォルダをチェック
-        var settings = getSystemSettings();
-        var foldersToCheck = [
-          { id: settings.ERROR_FOLDER_ID, name: 'エラーフォルダ' },
-          { id: settings.PROCESSING_FOLDER_ID, name: '処理中フォルダ' },
-          { id: settings.COMPLETED_FOLDER_ID, name: '完了フォルダ' }
-        ];
-
-        while (files.hasNext()) {
-          var file = files.next();
-          fileFound = true;
-          Logger.log('ファイルを発見: ' + file.getName());
-
-          // ファイルの現在のフォルダを特定
-          var parents = file.getParents();
-          var currentFolderId = parents.hasNext() ? parents.next().getId() : null;
-          var folderName = 'unknown';
-
-          // フォルダ名を特定
-          for (var j = 0; j < foldersToCheck.length; j++) {
-            if (foldersToCheck[j].id === currentFolderId) {
-              folderName = foldersToCheck[j].name;
-              break;
-            }
-          }
-
-          // エラーフォルダや処理中フォルダにある場合は未処理フォルダに移動
-          if (currentFolderId === settings.ERROR_FOLDER_ID ||
-            currentFolderId === settings.PROCESSING_FOLDER_ID) {
-            try {
-              // リトライ済みマークを追加
-              var originalDescription = file.getDescription() || "";
-              if (originalDescription.indexOf("[RESET_RETRY]") === -1) {
-                file.setDescription(originalDescription + " [RESET_RETRY]");
-              }
-
-              // 未処理フォルダに移動
-              FileProcessor.moveFileToFolder(file, settings.SOURCE_FOLDER_ID);
-              Logger.log('ファイルを未処理フォルダに移動しました: ' + file.getName());
-            } catch (moveError) {
-              Logger.log('ファイル移動エラー: ' + moveError);
-
-              // 代替移動方法を試す
-              try {
-                // 1. ファイルのコピーを未処理フォルダに作成
-                Logger.log('代替移動方法を試行: コピー → 削除');
-                var targetFolder = DriveApp.getFolderById(settings.SOURCE_FOLDER_ID);
-                var fileName = file.getName();
-                var fileBlob = file.getBlob();
-                var copiedFile = targetFolder.createFile(fileBlob);
-                copiedFile.setName(fileName);
-                copiedFile.setDescription(originalDescription + " [RESET_RETRY][COPY_RECOVERED]");
-
-                // 2. 元のファイルを削除試行（失敗してもOK）
-                try {
-                  file.setTrashed(true);
-                } catch (trashError) {
-                  Logger.log('元ファイルの削除に失敗: ' + trashError.toString());
-                }
-
-                Logger.log('代替方法でファイル移動完了: ' + fileName);
-              } catch (copyError) {
-                Logger.log('代替移動方法でも失敗: ' + copyError.toString() + '。ステータスのみ更新');
-                // この場合は失敗してもエラーをスローせず、ステータス更新だけでも成功とみなす
-              }
-            }
-          } else {
-            Logger.log('ファイルは ' + folderName + ' にあります。移動は不要です。');
-          }
-        }
-
-        if (!fileFound) {
-          Logger.log('対応するファイルが見つかりませんでした: record_id=' + record.recordId);
-        }
-
-        // 処理カウント更新
-        results.reset++;
-        results.details.push({
-          recordId: record.recordId,
-          status: 'reset',
-          fileFound: fileFound,
-          message: fileFound ? 'ステータスをリセットしました' : 'ファイルが見つからず、ステータスのみリセット'
-        });
-      } catch (error) {
-        Logger.log('PENDING文字起こしリセットエラー: ' + error.toString());
-
-        results.failed++;
-        results.details.push({
-          recordId: record.recordId,
-          status: 'error',
-          message: error.toString()
-        });
-      }
-    }
-
-    // 処理結果のログ出力
-    var endTime = new Date();
-    var processingTime = (endTime - startTime) / 1000; // 秒単位
-
-    var summary = 'PENDING状態の文字起こしリセット処理完了: ' +
-      '対象=' + results.total + '件, ' +
-      'リセット=' + results.reset + '件, ' +
-      '失敗=' + results.failed + '件, ' +
-      '処理時間=' + processingTime + '秒';
-
-    Logger.log(summary);
-    return summary;
-  } catch (error) {
-    var errorMessage = 'PENDING文字起こしリセット処理でエラー: ' + error.toString();
-    Logger.log(errorMessage);
-    return errorMessage;
-  }
+  return RecoveryService.resetPendingTranscriptions();
 }
 
 /**
@@ -1909,157 +1477,7 @@ function resetPendingTranscriptions() {
  * 通常のrecoverErrorFilesではスキップされている[RETRIED]マーク付きのファイルも対象
  */
 function forceRecoverAllErrorFiles() {
-  var startTime = new Date();
-  Logger.log('エラーフォルダ内ファイル強制復旧処理開始: ' + startTime);
-
-  try {
-    // 設定を取得
-    var localSettings = getSystemSettings();
-
-    if (!localSettings.ERROR_FOLDER_ID) {
-      throw new Error('エラーフォルダIDが設定されていません');
-    }
-
-    if (!localSettings.SOURCE_FOLDER_ID) {
-      throw new Error('処理対象フォルダIDが設定されていません');
-    }
-
-    // エラーフォルダのファイルを取得（すべて対象）
-    var errorFolder = DriveApp.getFolderById(localSettings.ERROR_FOLDER_ID);
-    var files = errorFolder.getFiles();
-    var errorFiles = [];
-
-    while (files.hasNext()) {
-      var file = files.next();
-      var mimeType = file.getMimeType() || "";
-
-      // 音声ファイルのみを対象とする
-      if (mimeType.indexOf('audio/') === 0 ||
-        mimeType === 'application/octet-stream' ||
-        file.getName().toLowerCase().indexOf('.mp3') !== -1) {
-        errorFiles.push(file);
-      }
-    }
-
-    Logger.log('強制復旧対象のエラーファイル数: ' + errorFiles.length);
-
-    if (errorFiles.length === 0) {
-      return '復旧対象のエラーファイルはありませんでした。';
-    }
-
-    // 復旧結果のトラッキング
-    var results = {
-      total: errorFiles.length,
-      recovered: 0,
-      failed: 0,
-      details: []
-    };
-
-    // ファイルを復旧
-    for (var i = 0; i < errorFiles.length; i++) {
-      var file = errorFiles[i];
-
-      try {
-        Logger.log('エラーファイル強制復旧処理: ' + file.getName());
-
-        // ファイルからメタデータを取得
-        var metadata = extractMetadataFromFile(file.getName());
-        var recordId = null;
-
-        if (metadata && metadata.recordId) {
-          recordId = metadata.recordId;
-        } else {
-          // メタデータから抽出できない場合はファイル名から直接抽出を試みる
-          var fileNameMatch = file.getName().match(/zoom_call_\d+_([a-f0-9]+)\.mp3/i);
-          if (fileNameMatch && fileNameMatch[1]) {
-            recordId = fileNameMatch[1];
-            Logger.log('ファイル名から直接record_idを抽出: ' + recordId);
-          }
-        }
-
-        if (recordId) {
-          // Recordingsシートの文字起こし状態を更新 (FORCE_RETRY)
-          updateTranscriptionStatusByRecordId(
-            recordId,
-            'FORCE_RETRY',
-            '',
-            Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss')
-          );
-        } else {
-          Logger.log('警告: record_idが特定できないため、Recordingsシートの状態更新をスキップします');
-        }
-
-        // 元の説明を保持し、強制リトライマークを追加
-        var originalDescription = file.getDescription() || "";
-        file.setDescription(originalDescription + " [FORCE_RETRY]");
-
-        // ファイルを未処理フォルダに移動
-        try {
-          FileProcessor.moveFileToFolder(file, localSettings.SOURCE_FOLDER_ID);
-        } catch (moveError) {
-          Logger.log('通常の移動方法で失敗: ' + moveError.toString());
-
-          // 代替移動方法を試す
-          try {
-            // 1. ファイルのコピーを未処理フォルダに作成
-            Logger.log('代替移動方法を試行: コピー → 削除');
-            var targetFolder = DriveApp.getFolderById(localSettings.SOURCE_FOLDER_ID);
-            var fileName = file.getName();
-            var fileBlob = file.getBlob();
-            var copiedFile = targetFolder.createFile(fileBlob);
-            copiedFile.setName(fileName);
-            copiedFile.setDescription(originalDescription + " [FORCE_RETRY][COPY_RECOVERED]");
-
-            // 2. 元のファイルを削除試行（失敗してもOK）
-            try {
-              file.setTrashed(true);
-            } catch (trashError) {
-              Logger.log('元ファイルの削除に失敗: ' + trashError.toString());
-            }
-
-            Logger.log('代替方法でファイル移動完了: ' + fileName);
-          } catch (copyError) {
-            throw new Error('代替移動方法でも失敗: ' + copyError.toString());
-          }
-        }
-
-        // 結果を記録
-        results.recovered++;
-        results.details.push({
-          fileName: file.getName(),
-          status: 'recovered',
-          message: 'エラーファイルを未処理フォルダに強制復旧しました'
-        });
-      } catch (error) {
-        Logger.log('エラーファイル強制復旧処理エラー: ' + error.toString());
-
-        results.failed++;
-        results.details.push({
-          fileName: file.getName(),
-          status: 'error',
-          message: error.toString()
-        });
-      }
-    }
-
-    // 処理結果のログ出力
-    var endTime = new Date();
-    var processingTime = (endTime - startTime) / 1000; // 秒単位
-
-    var summary = 'エラーファイル強制復旧処理完了: ' +
-      '対象=' + results.total + '件, ' +
-      '復旧=' + results.recovered + '件, ' +
-      '失敗=' + results.failed + '件, ' +
-      '処理時間=' + processingTime + '秒';
-
-    Logger.log(summary);
-    return summary;
-
-  } catch (error) {
-    var errorMessage = 'エラーファイル強制復旧処理でエラーが発生: ' + error.toString();
-    Logger.log(errorMessage);
-    return errorMessage;
-  }
+  return RecoveryService.forceRecoverAllErrorFiles();
 }
 
 /**
@@ -2067,92 +1485,7 @@ function forceRecoverAllErrorFiles() {
  * 文字起こしが SUCCESS になっているが、実際にはエラーが含まれているケースを検知
  */
 function detectAndRecoverPartialFailures() {
-  Logger.log('見逃しエラー検知・復旧処理を開始します');
-
-  try {
-    var sheet = ConfigManager.getRecordingsSheet();
-    var data = sheet.getDataRange().getValues();
-    var headers = data[0];
-    var idIndex = headers.indexOf(Constants.COLUMNS.RECORDINGS.ID);
-    var statusTranscriptionIndex = headers.indexOf(Constants.COLUMNS.RECORDINGS.STATUS_TRANSCRIPTION);
-    var updatedAtIndex = headers.indexOf(Constants.COLUMNS.RECORDINGS.UPDATED_AT);
-
-    if (idIndex === -1 || statusTranscriptionIndex === -1) {
-      Logger.log(Constants.ERROR_MESSAGES.REQUIRED_COLUMNS_NOT_FOUND);
-      return;
-    }
-
-    var results = FileMovementService.createResultObject();
-
-    // SUCCESSステータスのレコードを検査
-    for (var i = 1; i < data.length; i++) {
-      var row = data[i];
-      var recordId = row[idIndex];
-      var status = row[statusTranscriptionIndex];
-
-      if (status === Constants.STATUS.SUCCESS) {
-        results.total++;
-
-        // call_recordsシートで実際の文字起こし内容をチェック
-        var hasError = checkForErrorInTranscription(recordId);
-
-        if (hasError.found) {
-          Logger.log('見逃しエラーを検知: Record ID ' + recordId + ' - ' + hasError.issue);
-
-          // ステータスをERROR_DETECTEDに更新
-          sheet.getRange(i + 1, statusTranscriptionIndex + 1).setValue(Constants.STATUS.ERROR_DETECTED);
-
-          // updated_atを更新
-          if (updatedAtIndex !== -1) {
-            sheet.getRange(i + 1, updatedAtIndex + 1).setValue(new Date());
-          }
-
-          // ファイルをエラーフォルダに移動
-          var fileFound = moveFileToErrorFolder(recordId);
-
-          results.recovered++;
-          results.details.push({
-            recordId: recordId,
-            status: 'recovered',
-            issue: hasError.issue,
-            message: 'ステータスをERROR_DETECTEDに更新し、エラーフォルダに移動',
-            fileFound: fileFound
-          });
-        }
-      }
-    }
-
-    Logger.log('見逃しエラー検知・復旧処理完了: 検査=' + results.total + '件, 検知・復旧=' + results.recovered + '件');
-
-    // 管理者に通知メールを送信（見逃しエラーが検知された場合のみ）
-    if (results.total > 0 && results.recovered > 0) {
-      try {
-        var settings = getSystemSettings();
-        var adminEmails = settings.ADMIN_EMAILS || [];
-
-        for (var i = 0; i < adminEmails.length; i++) {
-          NotificationService.sendPartialFailureDetectionSummary(adminEmails[i], results);
-        }
-        Logger.log('見逃しエラー検知結果の通知メールを送信しました');
-      } catch (notificationError) {
-        Logger.log('通知メール送信エラー: ' + notificationError.toString());
-      }
-    }
-
-    return results;
-
-  } catch (error) {
-    Logger.log('見逃しエラー検知・復旧処理中にエラー: ' + error.toString());
-    return {
-      total: 0,
-      recovered: 0,
-      failed: 1,
-      details: [{
-        status: 'error',
-        message: error.toString()
-      }]
-    };
-  }
+  return PartialFailureDetector.detectAndRecoverPartialFailures();
 }
 
 /**
@@ -2161,41 +1494,7 @@ function detectAndRecoverPartialFailures() {
  * @return {boolean} - ファイルが見つかって移動できた場合true
  */
 function moveFileToErrorFolder(recordId) {
-  try {
-    var settings = getSystemSettings();
-    var foldersToCheck = [
-      { id: settings.COMPLETED_FOLDER_ID, name: '完了フォルダ' },
-      { id: settings.PROCESSING_FOLDER_ID, name: '処理中フォルダ' },
-      { id: settings.SOURCE_FOLDER_ID, name: 'ソースフォルダ' }
-    ];
-
-    for (var i = 0; i < foldersToCheck.length; i++) {
-      var folderInfo = foldersToCheck[i];
-      if (!folderInfo.id) continue;
-
-      try {
-        var folder = DriveApp.getFolderById(folderInfo.id);
-        var files = folder.getFiles();
-
-        while (files.hasNext()) {
-          var file = files.next();
-          if (file.getName().includes(recordId)) {
-            // ファイルをエラーフォルダに移動
-            FileProcessor.moveFileToFolder(file, settings.ERROR_FOLDER_ID);
-            Logger.log('ファイルをエラーフォルダに移動: ' + file.getName());
-            return true;
-          }
-        }
-      } catch (folderError) {
-        Logger.log(folderInfo.name + 'のチェック中にエラー: ' + folderError.toString());
-      }
-    }
-
-    return false;
-  } catch (error) {
-    Logger.log('ファイル移動エラー: ' + error.toString());
-    return false;
-  }
+  return PartialFailureDetector.moveFileToErrorFolder(recordId);
 }
 
 /**
@@ -2203,7 +1502,7 @@ function moveFileToErrorFolder(recordId) {
  * @return {string} 実行結果メッセージ
  */
 function setupAllTriggersWithRecovery() {
-  return TriggerManager.setupAllTriggers(true);
+  return TriggerManager.setupAllTriggers();
 }
 
 /**
@@ -2219,7 +1518,7 @@ function setupBasicTriggersOnly() {
  * @return {string} 実行結果メッセージ
  */
 function addRecoveryTriggersOnly() {
-  return TriggerManager.setupRecoveryTriggersOnly();
+  return TriggerManager.addRecoveryTriggers();
 }
 
 /**
@@ -2228,44 +1527,7 @@ function addRecoveryTriggersOnly() {
  * @return {string} 実行結果メッセージ
  */
 function runFullRecoveryProcess() {
-  var startTime = new Date();
-  Logger.log('全復旧処理開始: ' + startTime);
-
-  var results = [];
-
-  try {
-    // 1. 部分的失敗検知・復旧
-    Logger.log('1. 部分的失敗検知・復旧を実行中...');
-    var partialResult = detectAndRecoverPartialFailures();
-    results.push('部分的失敗検知: ' + partialResult);
-
-    // 2. PENDING状態リセット
-    Logger.log('2. PENDING状態リセットを実行中...');
-    var pendingResult = resetPendingTranscriptions();
-    results.push('PENDING復旧: ' + pendingResult);
-
-    // 3. エラーファイル復旧
-    Logger.log('3. エラーファイル復旧を実行中...');
-    var errorResult = recoverErrorFiles();
-    results.push('エラーファイル復旧: ' + errorResult);
-
-    // 4. 中断ファイル復旧
-    Logger.log('4. 中断ファイル復旧を実行中...');
-    var interruptedResult = recoverInterruptedFiles();
-    results.push('中断ファイル復旧: ' + interruptedResult);
-
-    var endTime = new Date();
-    var processingTime = (endTime - startTime) / 1000;
-
-    var summary = '全復旧処理完了（処理時間: ' + processingTime + '秒）\\n\\n' + results.join('\\n');
-    Logger.log(summary);
-
-    return summary;
-  } catch (error) {
-    var errorMessage = '全復旧処理中にエラー: ' + error.toString();
-    Logger.log(errorMessage);
-    return errorMessage;
-  }
+  return RecoveryService.runFullRecoveryProcess();
 }
 
 /**
@@ -2274,39 +1536,5 @@ function runFullRecoveryProcess() {
  * @return {Object} - {found: boolean, issue: string}
  */
 function checkForErrorInTranscription(recordId) {
-  try {
-    var sheet = ConfigManager.getCallRecordsSheet();
-    var data = sheet.getDataRange().getValues();
-    var headers = data[0];
-    var recordIdIndex = headers.indexOf(Constants.COLUMNS.CALL_RECORDS.RECORD_ID);
-    var transcriptionIndex = headers.indexOf(Constants.COLUMNS.CALL_RECORDS.TRANSCRIPTION);
-
-    if (recordIdIndex === -1 || transcriptionIndex === -1) {
-      return { found: false, issue: Constants.ERROR_MESSAGES.REQUIRED_COLUMNS_NOT_FOUND };
-    }
-
-    // 該当レコードを検索
-    for (var i = 1; i < data.length; i++) {
-      var row = data[i];
-      if (row[recordIdIndex] === recordId) {
-        var transcription = row[transcriptionIndex] || '';
-
-        // エラーパターンをチェック
-        for (var j = 0; j < Constants.ERROR_PATTERNS.length; j++) {
-          var errorPattern = Constants.ERROR_PATTERNS[j];
-          if (transcription.includes(errorPattern.pattern)) {
-            return { found: true, issue: errorPattern.issue };
-          }
-        }
-
-        return { found: false, issue: null };
-      }
-    }
-
-    return { found: false, issue: Constants.ERROR_MESSAGES.RECORD_NOT_FOUND };
-
-  } catch (error) {
-    Logger.log('文字起こし内容エラーチェック中にエラー: ' + error.toString());
-    return { found: false, issue: 'チェック処理エラー' };
-  }
+  return PartialFailureDetector.checkForErrorInTranscription(recordId);
 }

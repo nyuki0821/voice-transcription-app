@@ -10,6 +10,8 @@ Zoom通話録音ファイルを文字起こしし、情報を抽出・分析す�
 - AssemblyAIを使用した高精度な文字起こし
 - OpenAIを使用した会話内容の分析・要約
 - スプレッドシートへの結果一元管理
+- **包括的なテストスイート機能**
+- **高度なファイル移動・復旧機能**
 
 ## アーキテクチャ全体像
 
@@ -118,6 +120,7 @@ voice-transcription-app/
 │   │   ├── FileProcessor.js    # ファイル処理モジュール
 │   │   ├── NotificationService.js # 通知サービスモジュール
 │   │   ├── SpreadsheetManager.js # スプレッドシート操作モジュール
+│   │   ├── FileMovementService.js # ファイル移動・復旧サービス（新機能）
 │   │   └── Utilities.js        # ユーティリティ関数モジュール
 │   ├── zoom/                   # Zoom関連モジュール
 │   │   ├── ZoomAPIManager.js   # Zoom API管理モジュール
@@ -127,7 +130,17 @@ voice-transcription-app/
 │   │   ├── TranscriptionService.js # 文字起こしサービスモジュール
 │   │   └── InformationExtractor.js # 情報抽出モジュール
 │   ├── config/                 # 設定関連
-│   │   └── EnvironmentConfig.js # 環境設定モジュール
+│   │   ├── EnvironmentConfig.js # 環境設定モジュール
+│   │   ├── Constants.js        # 定数定義モジュール
+│   │   └── ConfigManager.js    # 設定管理モジュール
+│   ├── test/                   # テストスイート（新機能）
+│   │   ├── MasterTestRunner.js # 全テスト統合実行
+│   │   ├── ConstantsTest.js    # 定数テスト
+│   │   ├── ConfigManagerTest.js # 設定管理テスト
+│   │   ├── FileMovementServiceTest.js # ファイル移動テスト
+│   │   ├── RefactoringIntegrationTest.js # リファクタリング統合テスト
+│   │   ├── MediumPriorityRefactoringTest.js # 中優先度リファクタリングテスト
+│   │   └── README_TEST.md      # テスト機能説明書
 │   ├── RetentionCleaner.js     # データ保持期間管理モジュール
 │   └── appsscript.json         # AppsScript設定ファイル
 ├── cloud_function/             # GCPクラウドファンクション
@@ -187,6 +200,14 @@ voice-transcription-app/
 8. **スクリプトプロパティ設定**
    - `CONFIG_SPREADSHEET_ID`: 設定用スプレッドシートID
    - スプレッドシートの `settings` シートに各種APIキーや設定を記述
+
+9. **テスト実行（推奨）**
+   - セットアップ完了後、システムの健全性を確認
+   ```javascript
+   // Apps Scriptエディタで実行
+   runAllTestSuites();
+   ```
+   - 全テストが成功することを確認（成功率95%以上が目標）
 
 ### 必要な設定項目
 
@@ -288,23 +309,23 @@ TriggerManager.setupAllTriggers();
 ```
 
 #### **問題が少ない安定期**
-```javascript
+   ```javascript
 // 基本機能のみで軽量運用
 TriggerManager.setupBasicTriggers();
-```
+   ```
 
 #### **問題が多発している時**
-```javascript
+   ```javascript
 // 基本設定 + 復旧機能を強化
 TriggerManager.setupBasicTriggers();
 TriggerManager.setupRecoveryTriggersOnly();
-```
+   ```
 
 #### **メンテナンス時**
-```javascript
+   ```javascript
 // 全復旧処理を一括実行
 runFullRecoveryProcess();
-```
+   ```
 
 ## 料金モデルと運用コスト
 
@@ -334,6 +355,204 @@ runFullRecoveryProcess();
 - 個人情報を含む会話の処理には適切なセキュリティ対策を講じてください
 - 長期間のデータ保持には `RetentionCleaner.js` の設定を適切に行ってください
 - 文字起こしエラー発生時はログに記録されますが、call_recordsシートには保存されません 
+
+## テスト機能
+
+### 包括的テストスイート
+
+システムの品質保証のため、包括的なテストスイートを提供しています。
+
+#### テスト実行方法
+
+**1. 全テストスイート実行（推奨）**
+```javascript
+// 全テストを実行（優先度中リファクタリング含む）
+runAllTestSuites();
+
+// または
+MasterTestRunner.runAllTestSuites();
+```
+
+**2. 個別テストスイート実行**
+```javascript
+// 環境テストのみ
+MasterTestRunner.runEnvironmentTests();
+
+// FileMovementServiceテストのみ
+MasterTestRunner.runFileMovementServiceTests();
+
+// 設定管理テストのみ
+MasterTestRunner.runConfigManagerTests();
+
+// リファクタリング統合テストのみ
+MasterTestRunner.runRefactoringIntegrationTests();
+```
+
+#### テストスイート構成
+
+| テストスイート | 説明 | 主要テスト項目 |
+|---------------|------|---------------|
+| **Environment** | 基本環境の健全性チェック | モジュール存在確認、API利用可能性、ログ機能 |
+| **FileMovementService** | ファイル移動・復旧機能 | 処理結果オブジェクト操作、ログ出力、バリデーション |
+| **ConfigManager** | 設定管理機能 | 設定値取得、デフォルト値処理、エラーハンドリング |
+| **RefactoringIntegration** | リファクタリング統合テスト | 下位互換性、エラーハンドリング、統合動作 |
+| **MediumPriorityRefactoring** | 中優先度リファクタリング | グローバル関数チェック、モジュール互換性 |
+
+#### テスト結果の確認
+
+テスト実行後、以下の情報が表示されます：
+
+```
+=== 全テストスイート実行結果 ===
+総テスト数: 26
+成功: 26
+失敗: 0
+成功率: 100.0%
+
+スイート別結果:
+✅ Environment: 3/3 (100.0%)
+✅ FileMovementService: 3/3 (100.0%)
+✅ ConfigManager: 5/5 (100.0%)
+✅ RefactoringIntegration: 8/8 (100.0%)
+✅ MediumPriorityRefactoring: 7/7 (100.0%)
+```
+
+#### 継続的品質管理
+
+- **定期実行**: 重要な変更前後にテストスイートを実行
+- **回帰テスト**: 新機能追加時の既存機能への影響確認
+- **品質指標**: 成功率95%以上を維持目標
+
+## FileMovementService（ファイル移動・復旧サービス）
+
+### 概要
+
+`FileMovementService`は、エラーファイルの移動、復旧処理、ログ管理を統合的に行う高度なサービスです。
+
+### 主要機能
+
+#### 1. 処理結果オブジェクト管理
+
+```javascript
+// 結果オブジェクトの初期化
+var result = FileMovementService.createProcessingResult();
+
+// 成功ケースの追加
+FileMovementService.addSuccessResult(result, "file1.mp3", "rec123", "移動成功");
+
+// 失敗ケースの追加
+FileMovementService.addErrorResult(result, "file2.mp3", "rec456", "移動先フォルダが見つかりません");
+
+// 結果の取得
+var summary = FileMovementService.getResultSummary(result);
+```
+
+#### 2. 高度なログ出力機能
+
+```javascript
+// 見逃しエラー検知完了ログ
+FileMovementService.logPartialFailureDetectionSummary(
+  10,    // 対象件数
+  7,     // 成功件数
+  3,     // 失敗件数
+  8,     // ID特定件数
+  2,     // ID不明件数
+  0.103  // 処理時間（秒）
+);
+
+// ファイル復旧処理完了ログ
+FileMovementService.logFileRecoverySummary(
+  5,     // 対象件数
+  4,     // 成功件数
+  1,     // 失敗件数
+  0.107  // 処理時間（秒）
+);
+```
+
+#### 3. ファイル移動バリデーション
+
+```javascript
+// ファイル移動の事前チェック
+try {
+  FileMovementService.moveFileToFolder(null, "folderId");
+} catch (e) {
+  // Error: 移動対象ファイルが指定されていません
+}
+
+try {
+  FileMovementService.moveFileToFolder(file, null);
+} catch (e) {
+  // Error: 移動先フォルダIDが指定されていません
+}
+```
+
+#### 4. 統合復旧処理
+
+```javascript
+// 包括的な復旧処理
+var recoveryResult = FileMovementService.performComprehensiveRecovery();
+
+// 結果の詳細確認
+Logger.log("復旧対象: " + recoveryResult.total);
+Logger.log("成功: " + recoveryResult.recovered);
+Logger.log("失敗: " + recoveryResult.failed);
+
+// 個別結果の確認
+recoveryResult.details.forEach(function(detail) {
+  Logger.log(detail.fileName + " (" + detail.status + "): " + detail.message);
+});
+```
+
+### 使用例
+
+#### エラーファイルの一括復旧
+
+```javascript
+function recoverAllErrorFiles() {
+  var startTime = new Date().getTime();
+  
+  // 復旧処理実行
+  var result = FileMovementService.performComprehensiveRecovery();
+  
+  // 処理時間計算
+  var processingTime = (new Date().getTime() - startTime) / 1000;
+  
+  // サマリーログ出力
+  FileMovementService.logFileRecoverySummary(
+    result.total,
+    result.recovered,
+    result.failed,
+    processingTime
+  );
+  
+  return result;
+}
+```
+
+#### 部分的失敗の検知と復旧
+
+```javascript
+function detectPartialFailures() {
+  var startTime = new Date().getTime();
+  
+  // 検知処理（実装は別途）
+  var detectionResult = performPartialFailureDetection();
+  
+  var processingTime = (new Date().getTime() - startTime) / 1000;
+  
+  // 検知結果のログ出力
+  FileMovementService.logPartialFailureDetectionSummary(
+    detectionResult.total,
+    detectionResult.success,
+    detectionResult.failed,
+    detectionResult.identified,
+    detectionResult.unidentified,
+    processingTime
+  );
+  
+  return detectionResult;
+}
+```
 
 ## エラーハンドリング・復旧機能
 

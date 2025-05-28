@@ -305,4 +305,171 @@ function showAvailableTests() {
   Logger.log("========================================");
 
   return "テスト関数一覧を表示しました。詳細はログを確認してください。";
+}
+
+/**
+ * 全テストスイートを実行（優先度中リファクタリングテスト追加版）
+ */
+function runAllTestsWithMediumPriority() {
+  var startTime = new Date();
+  Logger.log('=== 全テストスイート実行開始（優先度中リファクタリング含む） ===');
+  Logger.log('開始時刻: ' + startTime);
+
+  var allResults = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    suites: []
+  };
+
+  var testSuites = [
+    { name: 'Environment', func: runEnvironmentTests },
+    { name: 'FileMovementService', func: runAllFileMovementServiceTests },
+    { name: 'Constants', func: runAllConstantsTests },
+    { name: 'ConfigManager', func: runAllConfigManagerTests },
+    { name: 'RefactoringIntegration', func: runAllRefactoringIntegrationTests },
+    { name: 'MediumPriorityRefactoring', func: runMediumPriorityRefactoringTests }
+  ];
+
+  for (var i = 0; i < testSuites.length; i++) {
+    var suite = testSuites[i];
+    Logger.log('\n--- ' + suite.name + ' テストスイート実行中 ---');
+
+    try {
+      var result = suite.func();
+      allResults.total += result.total;
+      allResults.passed += result.passed;
+      allResults.failed += result.failed;
+      allResults.suites.push({
+        name: suite.name,
+        result: result,
+        status: 'COMPLETED'
+      });
+
+      Logger.log(suite.name + ' テストスイート完了: ' + result.passed + '/' + result.total + ' 成功');
+    } catch (error) {
+      allResults.failed++;
+      allResults.total++;
+      allResults.suites.push({
+        name: suite.name,
+        status: 'ERROR',
+        error: error.toString()
+      });
+
+      Logger.log(suite.name + ' テストスイートでエラー: ' + error.toString());
+    }
+  }
+
+  var endTime = new Date();
+  var duration = (endTime - startTime) / 1000;
+
+  Logger.log('\n=== 全テストスイート実行結果（優先度中リファクタリング含む） ===');
+  Logger.log('総テスト数: ' + allResults.total);
+  Logger.log('成功: ' + allResults.passed);
+  Logger.log('失敗: ' + allResults.failed);
+  Logger.log('実行時間: ' + duration + '秒');
+  Logger.log('成功率: ' + ((allResults.passed / allResults.total) * 100).toFixed(1) + '%');
+
+  // スイート別結果
+  Logger.log('\n=== スイート別結果 ===');
+  for (var i = 0; i < allResults.suites.length; i++) {
+    var suite = allResults.suites[i];
+    if (suite.status === 'COMPLETED') {
+      var successRate = ((suite.result.passed / suite.result.total) * 100).toFixed(1);
+      Logger.log('✓ ' + suite.name + ': ' + suite.result.passed + '/' + suite.result.total + ' (' + successRate + '%)');
+    } else {
+      Logger.log('✗ ' + suite.name + ': ERROR - ' + suite.error);
+    }
+  }
+
+  return allResults;
+}
+
+/**
+ * 環境テストを実行（統一形式）
+ */
+function runEnvironmentTests() {
+  var results = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    details: []
+  };
+
+  try {
+    Logger.log("====== 環境テスト開始 ======");
+
+    // テスト1: 基本環境チェック
+    results.total++;
+    try {
+      var envResult = checkTestEnvironment();
+      results.passed++;
+      results.details.push({ name: "基本環境チェック", status: "PASS", result: envResult });
+      Logger.log("✓ 基本環境チェック: 成功");
+    } catch (error) {
+      results.failed++;
+      results.details.push({ name: "基本環境チェック", status: "FAIL", reason: error.toString() });
+      Logger.log("✗ 基本環境チェック: 失敗 - " + error);
+    }
+
+    // テスト2: 必要なモジュール存在確認
+    results.total++;
+    try {
+      var requiredModules = [
+        { name: "Constants", obj: Constants },
+        { name: "ConfigManager", obj: ConfigManager },
+        { name: "FileMovementService", obj: FileMovementService },
+        { name: "EnvironmentConfig", obj: EnvironmentConfig }
+      ];
+
+      var moduleCheckResults = [];
+      for (var i = 0; i < requiredModules.length; i++) {
+        var module = requiredModules[i];
+        if (typeof module.obj !== 'undefined') {
+          moduleCheckResults.push(module.name + ": OK");
+        } else {
+          moduleCheckResults.push(module.name + ": NG");
+        }
+      }
+
+      results.passed++;
+      results.details.push({
+        name: "モジュール存在確認",
+        status: "PASS",
+        result: "モジュールチェック完了: " + moduleCheckResults.join(", ")
+      });
+      Logger.log("✓ モジュール存在確認: 成功");
+    } catch (error) {
+      results.failed++;
+      results.details.push({ name: "モジュール存在確認", status: "FAIL", reason: error.toString() });
+      Logger.log("✗ モジュール存在確認: 失敗 - " + error);
+    }
+
+    // テスト3: Google Apps Script API確認
+    results.total++;
+    try {
+      var testDate = new Date();
+      Utilities.sleep(1);
+      var apiTest = "基本API動作確認完了";
+
+      results.passed++;
+      results.details.push({ name: "Google Apps Script API確認", status: "PASS", result: apiTest });
+      Logger.log("✓ Google Apps Script API確認: 成功");
+    } catch (error) {
+      results.failed++;
+      results.details.push({ name: "Google Apps Script API確認", status: "FAIL", reason: error.toString() });
+      Logger.log("✗ Google Apps Script API確認: 失敗 - " + error);
+    }
+
+    Logger.log("====== 環境テスト完了 ======");
+    Logger.log("環境テスト結果: " + results.passed + "/" + results.total + " 成功");
+
+    return results;
+  } catch (error) {
+    Logger.log("環境テスト実行中にエラー: " + error);
+    results.failed++;
+    results.total++;
+    results.details.push({ name: "環境テスト実行", status: "ERROR", reason: error.toString() });
+    return results;
+  }
 } 

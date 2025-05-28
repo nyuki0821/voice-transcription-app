@@ -213,28 +213,70 @@ function testExtractRecordIdFromFileName() {
  * Constantsモジュールの全テストを実行
  */
 function runAllConstantsTests() {
-  var results = [];
+  var startTime = new Date();
+  Logger.log("====== Constants 全テスト開始 ======");
+  Logger.log("開始時刻: " + startTime);
 
-  try {
-    Logger.log("====== Constants 全テスト開始 ======");
+  var results = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    details: []
+  };
 
-    // 各テストを実行
-    results.push({ name: "定数定義", result: testConstantDefinitions() });
-    results.push({ name: "メッセージフォーマット", result: testFormatMessage() });
-    results.push({ name: "音声ファイル判定", result: testIsAudioFile() });
-    results.push({ name: "レコードID抽出", result: testExtractRecordIdFromFileName() });
+  var tests = [
+    { name: "定数定義", func: testConstantDefinitions },
+    { name: "メッセージフォーマット", func: testFormatMessage },
+    { name: "音声ファイル判定", func: testIsAudioFile },
+    { name: "レコードID抽出", func: testExtractRecordIdFromFileName }
+  ];
 
-    // 結果をログに出力
-    Logger.log("====== テスト結果サマリー ======");
-    for (var i = 0; i < results.length; i++) {
-      Logger.log((i + 1) + ". " + results[i].name + ": " +
-        (results[i].result.indexOf("エラー") === -1 ? "成功" : "失敗"));
+  for (var i = 0; i < tests.length; i++) {
+    var test = tests[i];
+    results.total++;
+
+    try {
+      Logger.log("\n--- " + test.name + "テスト実行中 ---");
+      var result = test.func();
+
+      if (result.indexOf("エラー") === -1) {
+        results.passed++;
+        results.details.push({ name: test.name, status: "PASS", result: result });
+        Logger.log(test.name + "テスト: PASS");
+      } else {
+        results.failed++;
+        results.details.push({ name: test.name, status: "FAIL", reason: result });
+        Logger.log(test.name + "テスト: FAIL");
+      }
+    } catch (error) {
+      results.failed++;
+      results.details.push({ name: test.name, status: "ERROR", reason: error.toString() });
+      Logger.log(test.name + "テスト: ERROR - " + error.toString());
     }
-
-    Logger.log("====== Constants 全テスト完了 ======");
-    return "全テストが完了しました。詳細はログを確認してください。";
-  } catch (error) {
-    Logger.log("テスト実行中にエラー: " + error);
-    return "テスト中にエラーが発生しました: " + error;
   }
+
+  var endTime = new Date();
+  var duration = (endTime - startTime) / 1000;
+
+  Logger.log("\n====== Constants テスト結果 ======");
+  Logger.log("総テスト数: " + results.total);
+  Logger.log("成功: " + results.passed);
+  Logger.log("失敗: " + results.failed);
+  Logger.log("実行時間: " + duration + "秒");
+  Logger.log("成功率: " + ((results.passed / results.total) * 100).toFixed(1) + "%");
+
+  // 詳細結果
+  Logger.log("\n=== 詳細結果 ===");
+  for (var i = 0; i < results.details.length; i++) {
+    var detail = results.details[i];
+    var status = detail.status === "PASS" ? "✓" : "✗";
+    var message = status + " " + detail.name + ": " + detail.status;
+    if (detail.reason) {
+      message += " (" + detail.reason + ")";
+    }
+    Logger.log(message);
+  }
+
+  Logger.log("====== Constants 全テスト完了 ======");
+  return results;
 } 
