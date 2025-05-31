@@ -10,6 +10,8 @@ Zoom通話録音ファイルを文字起こしし、情報を抽出・分析す�
 - AssemblyAIを使用した高精度な文字起こし
 - OpenAIを使用した会話内容の分析・要約
 - スプレッドシートへの結果一元管理
+- **包括的なテストスイート機能**
+- **高度なファイル移動・復旧機能**
 
 ## アーキテクチャ全体像
 
@@ -118,6 +120,7 @@ voice-transcription-app/
 │   │   ├── FileProcessor.js    # ファイル処理モジュール
 │   │   ├── NotificationService.js # 通知サービスモジュール
 │   │   ├── SpreadsheetManager.js # スプレッドシート操作モジュール
+│   │   ├── FileMovementService.js # ファイル移動・復旧サービス（新機能）
 │   │   └── Utilities.js        # ユーティリティ関数モジュール
 │   ├── zoom/                   # Zoom関連モジュール
 │   │   ├── ZoomAPIManager.js   # Zoom API管理モジュール
@@ -127,7 +130,17 @@ voice-transcription-app/
 │   │   ├── TranscriptionService.js # 文字起こしサービスモジュール
 │   │   └── InformationExtractor.js # 情報抽出モジュール
 │   ├── config/                 # 設定関連
-│   │   └── EnvironmentConfig.js # 環境設定モジュール
+│   │   ├── EnvironmentConfig.js # 環境設定モジュール
+│   │   ├── Constants.js        # 定数定義モジュール
+│   │   └── ConfigManager.js    # 設定管理モジュール
+│   ├── test/                   # テストスイート（新機能）
+│   │   ├── MasterTestRunner.js # 全テスト統合実行
+│   │   ├── ConstantsTest.js    # 定数テスト
+│   │   ├── ConfigManagerTest.js # 設定管理テスト
+│   │   ├── FileMovementServiceTest.js # ファイル移動テスト
+│   │   ├── RefactoringIntegrationTest.js # リファクタリング統合テスト
+│   │   ├── MediumPriorityRefactoringTest.js # 中優先度リファクタリングテスト
+│   │   └── README_TEST.md      # テスト機能説明書
 │   ├── RetentionCleaner.js     # データ保持期間管理モジュール
 │   └── appsscript.json         # AppsScript設定ファイル
 ├── cloud_function/             # GCPクラウドファンクション
@@ -188,6 +201,14 @@ voice-transcription-app/
    - `CONFIG_SPREADSHEET_ID`: 設定用スプレッドシートID
    - スプレッドシートの `settings` シートに各種APIキーや設定を記述
 
+9. **テスト実行（推奨）**
+   - セットアップ完了後、システムの健全性を確認
+   ```javascript
+   // Apps Scriptエディタで実行
+   runAllTestSuites();
+   ```
+   - 全テストが成功することを確認（成功率95%以上が目標）
+
 ### 必要な設定項目
 
 | 設定項目 | 説明 |
@@ -205,70 +226,105 @@ voice-transcription-app/
 | ZOOM_WEBHOOK_SECRET | Webhook検証用シークレット |
 | RETENTION_DAYS | ファイル保持日数（デフォルト90日) |
 
-## トリガー構成とバッチ処理一覧
+## トリガー設定・管理
 
-このアプリケーションでは、以下のトリガーとバッチ処理を使用しています。
+### 包括的トリガー設定
 
-### トリガー設定関数
+#### 1. **全トリガー設定（推奨）**
+```javascript
+// 復旧機能も含めた全トリガーを設定（デフォルト）
+TriggerManager.setupAllTriggers();
+// または明示的に
+TriggerManager.setupAllTriggers(true);
 
-| 設定関数名 | 設定内容 | ファイル |
-|------------|----------|----------|
-| `setupZoomTriggers()` | Zoom録音関連の全トリガー設定 | `TriggerManager.js` |
-| `setupTranscriptionTriggers()` | 文字起こし関連の全トリガー設定 | `TriggerManager.js` |
-| `setupDailyZoomApiTokenRefresh()` | Zoom APIトークン更新トリガー | `TriggerManager.js` |
-| `setupRecordingsSheetTrigger()` | Recordingsシート処理トリガー | `TriggerManager.js` |
-| `setupAllTriggers()` | 全てのアプリケーショントリガーを一括設定 | `TriggerManager.js` |
+// Apps Script直接実行用
+setupAllTriggersWithRecovery();
+```
 
-### バッチ処理一覧
+**設定されるトリガー:**
+- Zoom録音取得（30分ごと）
+- 文字起こし処理（10分ごと）
+- Zoomトークン更新（毎日6:00）
+- Recordingsシート監視（1時間ごと）
+- 部分的失敗検知（毎日22:00）
+- 中断ファイル復旧（5分ごと）
+- PENDING復旧（2時間ごと）
+- エラーファイル復旧（4時間ごと）
 
-| 実行関数名 | タイミング | 役割 | 設定元 |
-|------------|------------|------|--------|
-| `processRecordingsFromSheet()` | 30分ごと | Recordingsシートから未処理録音を取得 | `setupZoomTriggers()` |
-| `fetchZoomRecordingsMorningBatch()` | 毎朝6:15 | 前日深夜〜当日朝までの録音を取得 | `setupZoomTriggers()` |
-| `purgeOldRecordings()` | 日曜03:00 | 90日超過ファイルの削除 | `setupZoomTriggers()` |
-| `refreshZoomAPIToken()` | 毎朝5:00 | Zoom APIトークンの更新 | `setupDailyZoomApiTokenRefresh()` |
-| `startDailyProcess()` | 毎朝6:00 | 文字起こし処理の有効化 | `setupTranscriptionTriggers()` |
-| `processBatchOnSchedule()` | 10分ごと | 文字起こし処理の定期実行(6:00-24:00) | `setupTranscriptionTriggers()` |
-| `sendDailySummary()` | 毎日19:00 | 日次サマリーメールの送信 | `setupTranscriptionTriggers()` |
+#### 2. **基本トリガーのみ設定**
+```javascript
+// 復旧機能を除いた基本機能のみ
+TriggerManager.setupBasicTriggers();
 
-### 手動実行関数
+// Apps Script直接実行用
+setupBasicTriggersOnly();
+```
 
-| 関数名 | 目的 | 備考 |
-|--------|------|------|
-| `fetchZoomRecordingsManually(hours)` | 指定時間の録音を手動取得 | 時間範囲指定可 |
-| `fetchLastHourRecordings()` | 直近1時間の録音を取得 | `fetchZoomRecordingsManually(1)` |
-| `fetchLast2HoursRecordings()` | 直近2時間の録音を取得 | `fetchZoomRecordingsManually(2)` |
-| `fetchLast6HoursRecordings()` | 直近6時間の録音を取得 | `fetchZoomRecordingsManually(6)` |
-| `fetchLast24HoursRecordings()` | 直近24時間の録音を取得 | `fetchZoomRecordingsManually(24)` |
-| `fetchLast48HoursRecordings()` | 直近48時間の録音を取得 | `fetchZoomRecordingsManually(48)` |
-| `fetchAllPendingRecordings()` | 全ての未処理録音を取得 | `fetchZoomRecordingsManually()` |
-| `manualSendDailySummary(dateStr)` | 日次サマリーを手動送信 | 日付指定可 |
-| `stopDailyProcess()` | 文字起こし処理を停止 | 処理フラグをオフ |
+**設定されるトリガー:**
+- Zoom録音取得（30分ごと）
+- 文字起こし処理（10分ごと）
+- Zoomトークン更新（毎日6:00）
+- Recordingsシート監視（1時間ごと）
+- 部分的失敗検知（毎日22:00）
 
-### トリガー管理関数
+#### 3. **復旧トリガーのみ追加**
+```javascript
+// 既存のトリガーに復旧機能を追加
+TriggerManager.setupRecoveryTriggersOnly();
 
-| 関数名 | 目的 | 備考 |
-|--------|------|------|
-| `deleteAllTriggers()` | 全てのトリガーを一括削除 | 注意：全てのトリガーが削除されます |
-| `deleteTriggersWithNameContaining(functionNamePart)` | 特定の名前を含むトリガーのみ削除 | 部分一致で削除 |
+// Apps Script直接実行用
+addRecoveryTriggersOnly();
+```
 
-### 通常運用の流れ
+**追加されるトリガー:**
+- 中断ファイル復旧（5分ごと）
+- PENDING復旧（2時間ごと）
+- エラーファイル復旧（4時間ごと）
 
-1. **初期セットアップ時**:
+### スプレッドシートメニューからの設定
+
+1. **設定スプレッドシートを開く**
+2. **メニューバー** → **文字起こしシステム** → **トリガー設定**
+3. 以下から選択：
+   - **🔧 全トリガー設定（復旧機能込み）** ← **推奨**
+   - **⚙️ 基本トリガーのみ設定**
+   - **🔄 復旧トリガーのみ追加**
+
+### トリガー削除
+
+```javascript
+// 全トリガー削除
+TriggerManager.deleteAllTriggers();
+
+// 復旧トリガーのみ削除
+TriggerManager.removeRecoveryTriggers();
+```
+
+### 運用シナリオ別推奨設定
+
+#### **通常運用時**
+```javascript
+// 全機能を有効にして安定運用
+TriggerManager.setupAllTriggers();
+```
+
+#### **問題が少ない安定期**
    ```javascript
-   TriggerManager.setupAllTriggers();  // 全てのトリガーを一括設定
+// 基本機能のみで軽量運用
+TriggerManager.setupBasicTriggers();
    ```
 
-2. **トリガーに問題が発生した場合**:
+#### **問題が多発している時**
    ```javascript
-   TriggerManager.deleteAllTriggers();  // 全てのトリガーをリセット
-   TriggerManager.setupAllTriggers();  // 再設定
+// 基本設定 + 復旧機能を強化
+TriggerManager.setupBasicTriggers();
+TriggerManager.setupRecoveryTriggersOnly();
    ```
 
-3. **特定のバッチのみ手動実行する場合**:
+#### **メンテナンス時**
    ```javascript
-   TriggerManager.fetchLast24HoursRecordings();  // 直近24時間分の録音取得
-   manualSendDailySummary();  // 本日分のサマリー送信
+// 全復旧処理を一括実行
+runFullRecoveryProcess();
    ```
 
 ## 料金モデルと運用コスト
@@ -299,3 +355,316 @@ voice-transcription-app/
 - 個人情報を含む会話の処理には適切なセキュリティ対策を講じてください
 - 長期間のデータ保持には `RetentionCleaner.js` の設定を適切に行ってください
 - 文字起こしエラー発生時はログに記録されますが、call_recordsシートには保存されません 
+
+## テスト機能
+
+### 包括的テストスイート
+
+システムの品質保証のため、包括的なテストスイートを提供しています。
+
+#### テスト実行方法
+
+**1. 全テストスイート実行（推奨）**
+```javascript
+// 全テストを実行（優先度中リファクタリング含む）
+runAllTestSuites();
+
+// または
+MasterTestRunner.runAllTestSuites();
+```
+
+**2. 個別テストスイート実行**
+```javascript
+// 環境テストのみ
+MasterTestRunner.runEnvironmentTests();
+
+// FileMovementServiceテストのみ
+MasterTestRunner.runFileMovementServiceTests();
+
+// 設定管理テストのみ
+MasterTestRunner.runConfigManagerTests();
+
+// リファクタリング統合テストのみ
+MasterTestRunner.runRefactoringIntegrationTests();
+```
+
+#### テストスイート構成
+
+| テストスイート | 説明 | 主要テスト項目 |
+|---------------|------|---------------|
+| **Environment** | 基本環境の健全性チェック | モジュール存在確認、API利用可能性、ログ機能 |
+| **FileMovementService** | ファイル移動・復旧機能 | 処理結果オブジェクト操作、ログ出力、バリデーション |
+| **ConfigManager** | 設定管理機能 | 設定値取得、デフォルト値処理、エラーハンドリング |
+| **RefactoringIntegration** | リファクタリング統合テスト | 下位互換性、エラーハンドリング、統合動作 |
+| **MediumPriorityRefactoring** | 中優先度リファクタリング | グローバル関数チェック、モジュール互換性 |
+
+#### テスト結果の確認
+
+テスト実行後、以下の情報が表示されます：
+
+```
+=== 全テストスイート実行結果 ===
+総テスト数: 26
+成功: 26
+失敗: 0
+成功率: 100.0%
+
+スイート別結果:
+✅ Environment: 3/3 (100.0%)
+✅ FileMovementService: 3/3 (100.0%)
+✅ ConfigManager: 5/5 (100.0%)
+✅ RefactoringIntegration: 8/8 (100.0%)
+✅ MediumPriorityRefactoring: 7/7 (100.0%)
+```
+
+#### 継続的品質管理
+
+- **定期実行**: 重要な変更前後にテストスイートを実行
+- **回帰テスト**: 新機能追加時の既存機能への影響確認
+- **品質指標**: 成功率95%以上を維持目標
+
+## FileMovementService（ファイル移動・復旧サービス）
+
+### 概要
+
+`FileMovementService`は、エラーファイルの移動、復旧処理、ログ管理を統合的に行う高度なサービスです。
+
+### 主要機能
+
+#### 1. 処理結果オブジェクト管理
+
+```javascript
+// 結果オブジェクトの初期化
+var result = FileMovementService.createProcessingResult();
+
+// 成功ケースの追加
+FileMovementService.addSuccessResult(result, "file1.mp3", "rec123", "移動成功");
+
+// 失敗ケースの追加
+FileMovementService.addErrorResult(result, "file2.mp3", "rec456", "移動先フォルダが見つかりません");
+
+// 結果の取得
+var summary = FileMovementService.getResultSummary(result);
+```
+
+#### 2. 高度なログ出力機能
+
+```javascript
+// 見逃しエラー検知完了ログ
+FileMovementService.logPartialFailureDetectionSummary(
+  10,    // 対象件数
+  7,     // 成功件数
+  3,     // 失敗件数
+  8,     // ID特定件数
+  2,     // ID不明件数
+  0.103  // 処理時間（秒）
+);
+
+// ファイル復旧処理完了ログ
+FileMovementService.logFileRecoverySummary(
+  5,     // 対象件数
+  4,     // 成功件数
+  1,     // 失敗件数
+  0.107  // 処理時間（秒）
+);
+```
+
+#### 3. ファイル移動バリデーション
+
+```javascript
+// ファイル移動の事前チェック
+try {
+  FileMovementService.moveFileToFolder(null, "folderId");
+} catch (e) {
+  // Error: 移動対象ファイルが指定されていません
+}
+
+try {
+  FileMovementService.moveFileToFolder(file, null);
+} catch (e) {
+  // Error: 移動先フォルダIDが指定されていません
+}
+```
+
+#### 4. 統合復旧処理
+
+```javascript
+// 包括的な復旧処理
+var recoveryResult = FileMovementService.performComprehensiveRecovery();
+
+// 結果の詳細確認
+Logger.log("復旧対象: " + recoveryResult.total);
+Logger.log("成功: " + recoveryResult.recovered);
+Logger.log("失敗: " + recoveryResult.failed);
+
+// 個別結果の確認
+recoveryResult.details.forEach(function(detail) {
+  Logger.log(detail.fileName + " (" + detail.status + "): " + detail.message);
+});
+```
+
+### 使用例
+
+#### エラーファイルの一括復旧
+
+```javascript
+function recoverAllErrorFiles() {
+  var startTime = new Date().getTime();
+  
+  // 復旧処理実行
+  var result = FileMovementService.performComprehensiveRecovery();
+  
+  // 処理時間計算
+  var processingTime = (new Date().getTime() - startTime) / 1000;
+  
+  // サマリーログ出力
+  FileMovementService.logFileRecoverySummary(
+    result.total,
+    result.recovered,
+    result.failed,
+    processingTime
+  );
+  
+  return result;
+}
+```
+
+#### 部分的失敗の検知と復旧
+
+```javascript
+function detectPartialFailures() {
+  var startTime = new Date().getTime();
+  
+  // 検知処理（実装は別途）
+  var detectionResult = performPartialFailureDetection();
+  
+  var processingTime = (new Date().getTime() - startTime) / 1000;
+  
+  // 検知結果のログ出力
+  FileMovementService.logPartialFailureDetectionSummary(
+    detectionResult.total,
+    detectionResult.success,
+    detectionResult.failed,
+    detectionResult.identified,
+    detectionResult.unidentified,
+    processingTime
+  );
+  
+  return detectionResult;
+}
+```
+
+## エラーハンドリング・復旧機能
+
+### 改善されたエラー検知機能
+
+システムは以下の方法でエラーを検知・処理します：
+
+#### 1. リアルタイムエラー検知
+- **OpenAI APIエラー**: クォータ制限、APIキーエラー、レスポンスエラーを即座に検知
+- **文字起こしエラー**: GPT-4o-mini、AssemblyAIの処理エラーを検知
+- **部分的失敗**: エラーが発生しても処理が続行されるケースを検知
+
+#### 2. 部分的失敗の自動検知・復旧
+毎日22:00に自動実行される機能：
+
+```javascript
+// 手動実行の場合
+detectAndRecoverPartialFailures();
+```
+
+**検知対象のエラーパターン:**
+- `insufficient_quota` (OpenAI APIクォータ制限)
+- `GPT-4o-mini API呼び出しエラー`
+- `OpenAI APIからのレスポンスエラー`
+- `情報抽出に失敗しました`
+- `JSONの解析に失敗しました`
+
+#### 3. エラーステータスの適切な管理
+
+**ステータスの種類:**
+- `SUCCESS`: 正常完了
+- `ERROR: [エラー内容]`: 処理エラー
+- `ERROR_DETECTED: [検知された問題]`: 部分的失敗を後から検知
+- `RETRY`: 復旧処理対象
+- `PENDING`: 処理待ち
+
+#### 4. 自動復旧機能
+
+**復旧処理の種類:**
+1. **エラーファイル復旧**: `recoverErrorFiles()`
+2. **PENDING状態リセット**: `resetPendingTranscriptions()`
+3. **部分的失敗復旧**: `detectAndRecoverPartialFailures()`
+4. **強制復旧**: `forceRecoverAllErrorFiles()`
+
+### 使用方法
+
+#### 手動でエラー検知・復旧を実行
+
+```javascript
+// 部分的失敗を検知・復旧
+var result = detectAndRecoverPartialFailures();
+Logger.log(result);
+
+// エラーファイルを復旧
+var result = recoverErrorFiles();
+Logger.log(result);
+
+// PENDING状態をリセット
+var result = resetPendingTranscriptions();
+Logger.log(result);
+```
+
+#### トリガーの設定
+
+```javascript
+// 全トリガーを設定（部分的失敗検知を含む）
+TriggerManager.setupAllTriggers();
+
+// 部分的失敗検知トリガーのみ設定
+TriggerManager.setupPartialFailureDetectionTrigger();
+```
+
+### 通知機能
+
+部分的失敗が検知された場合、管理者に自動でメール通知が送信されます。
+
+**通知内容:**
+- 検知されたレコード数
+- 復旧成功・失敗件数
+- 各レコードの詳細情報（Record ID、問題の種類、復旧状況）
+
+### 設定
+
+環境設定スプレッドシートの `settings` シートで以下を設定：
+
+| 設定項目 | 説明 |
+|---------|------|
+| ADMIN_EMAILS | 通知先メールアドレス（カンマ区切り） |
+| ENHANCE_WITH_OPENAI | OpenAI機能の有効/無効（`true`/`false`） |
+
+**OpenAI APIエラー時の緊急対処:**
+```
+ENHANCE_WITH_OPENAI = false
+```
+に設定すると、OpenAI APIを使わずにAssemblyAIのみで処理を続行できます。
+
+### トラブルシューティング
+
+#### よくある問題と対処法
+
+1. **OpenAI APIクォータ制限**
+   - 使用量ダッシュボードで確認: https://platform.openai.com/usage
+   - 請求情報を確認: https://platform.openai.com/account/billing
+   - 一時的に `ENHANCE_WITH_OPENAI = false` に設定
+
+2. **部分的失敗が多発する場合**
+   - `detectAndRecoverPartialFailures()` を手動実行
+   - ログでエラーパターンを確認
+   - 必要に応じてAPIキーや設定を見直し
+
+3. **ファイルが見つからない場合**
+   - 各フォルダ（SOURCE, PROCESSING, COMPLETED, ERROR）を確認
+   - `moveFileToErrorFolder()` でファイルの場所を特定
+
+## セットアップ方法 
