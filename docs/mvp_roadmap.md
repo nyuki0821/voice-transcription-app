@@ -28,22 +28,20 @@
     *   **機能:** Zoom PhoneからのWebhook (`recording_completed`) 受信、録音ファイルのCloud Storageへの直接保存、関連メタ情報 (ファイル名、日時、通話相手情報等) のFirestoreへの記録。
     *   **アーキテクチャ:**
         ```mermaid
-graph LR
-    A[Zoom Phone] -- Webhook (recording_completed) --> B(Cloud Functions - Webhook Receiver);
-    B -- 録音ファイル保存 --> C[Cloud Storage];
-    B -- メタデータ記録 --> D[Firestore - Recordings Collection];
-end
+        graph LR
+            A[Zoom Phone] --> B[Cloud Functions - Webhook Receiver]
+            B --> C[Cloud Storage]
+            B --> D[Firestore - Recordings Collection]
         ```
 2.  **1-2: 文字起こし・基本分析処理パイプライン構築:**
     *   **機能:** Cloud Storageへのファイル保存をトリガーとしたCloud Functionsの実行。既存のAssemblyAIおよびOpenAI連携ロジックを利用した文字起こしと基本情報抽出。処理結果 (文字起こしテキスト、抽出情報) のFirestoreへの保存。
     *   **アーキテクチャ:**
         ```mermaid
-graph LR
-    C[Cloud Storage] -- ファイル保存トリガー --> E(Cloud Functions - Transcription & Analysis);
-    E -- 文字起こしAPIリクエスト --> F[AssemblyAI API];
-    E -- 分析APIリクエスト --> G[OpenAI API];
-    E -- 処理結果保存 --> H[Firestore - AnalysisResults Collection];
-end
+        graph LR
+            C[Cloud Storage] --> E[Cloud Functions - Transcription & Analysis]
+            E --> F[AssemblyAI API]
+            E --> G[OpenAI API]
+            E --> H[Firestore - AnalysisResults Collection]
         ```
 3.  **1-3: 基本ファイルステータス管理とエラーログ記録:**
     *   **機能:** 各処理ステップ (ファイル取得、文字起こし、分析) のステータスをFirestoreで管理。基本エラー発生時のCloud Loggingへのログ記録。
@@ -65,11 +63,10 @@ end
     *   **機能:** Firestoreに保存された文字起こし結果や分析結果を一覧表示・検索できるシンプルなWebアプリケーション。主要KPI（日次処理件数、エラー件数等）を表示する基本ダッシュボード。必要に応じたCSVエクスポート機能。
     *   **アーキテクチャ:**
         ```mermaid
-graph LR
-    I[Firebase Hosting - 社内Web App/Dashboard] -- データ読み取り --> D[Firestore - Recordings Collection];
-    I -- データ読み取り --> H[Firestore - AnalysisResults Collection];
-    J[社内ユーザー] --> I;
-end
+        graph LR
+            J[社内ユーザー] --> I[Firebase Hosting - 社内Web App/Dashboard]
+            I --> D[Firestore - Recordings Collection]
+            I --> H[Firestore - AnalysisResults Collection]
         ```
 2.  **2-2: 基本的なファイルエラーハンドリングと手動復旧サポート:**
     *   **機能:** エラー発生時、対象ファイルをCloud Storage内のエラー専用領域へ移動。管理者がエラー内容を確認し、再処理を試行できる（またはステータスを更新できる）簡易的な仕組みの検討（例: 特定のメタデータをFirestoreで更新することで再処理をトリガー）。
@@ -93,12 +90,11 @@ end
     *   **機能:** Firebase Authenticationを利用した顧客ごとの認証基盤。Firestoreのセキュリティルールとデータモデリングによる顧客データの論理的な分離。
     *   **アーキテクチャ (概念):**
         ```mermaid
-graph TD
-    K[顧客ユーザー] -- ログイン --> L(Firebase Authentication);
-    L -- 認証情報 --> M[API (Cloud Functions/Run)];
-    M -- テナントIDに基づいてアクセス --> N[Firestore (テナント別データ)];
-    M -- テナントIDに基づいてアクセス --> O[Cloud Storage (テナント別バケット/プレフィックス)];
-end
+        graph TD
+            K[顧客ユーザー] --> L[Firebase Authentication]
+            L --> M[API - Cloud Functions/Run]
+            M --> N[Firestore - テナント別データ]
+            M --> O[Cloud Storage - テナント別バケット/プレフィックス]
         ```
 2.  **3-2: 顧客向け初期ダッシュボード機能開発:**
     *   **機能:** 顧客が自身の商談データ（文字起こし、基本分析結果）を閲覧・検索できるダッシュボード。
@@ -124,11 +120,10 @@ end
     *   **機能:** 担当者別・案件別のKPI表示、重要キーワードのトレンド分析、フィルタリング機能など、より高度な分析機能と可視化オプションをダッシュボードに追加。(Looker Studio連携またはカスタムフロントエンドでのリッチな表現を検討)
     *   **アーキテクチャ (可視化部分):**
         ```mermaid
-graph TD
-    N[Firestore (テナント別データ)] --> P{データ連携/集計処理};
-    P --> Q[Looker Studio または カスタムダッシュボードUI];
-    K[顧客ユーザー] --> Q;
-end
+        graph TD
+            N[Firestore - テナント別データ] --> P[データ連携/集計処理]
+            P --> Q[Looker Studio または カスタムダッシュボードUI]
+            K[顧客ユーザー] --> Q
         ```
 2.  **4-2: セキュリティ強化と各種規約整備:**
     *   **機能:** GCPのセキュリティ機能（Identity Platformの高度な機能、Security Command Centerの活用検討）によるセキュリティ強化。利用規約、プライバシーポリシーの整備。
