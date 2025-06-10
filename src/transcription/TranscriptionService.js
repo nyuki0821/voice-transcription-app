@@ -20,6 +20,7 @@ var TranscriptionService = (function () {
 
     try {
       Logger.log('文字起こし処理開始: ' + file.getName());
+
       // GPT-4o-mini-transcribeでの文字起こし
       const openaiTranscriptResult = transcribeWithGPT4oMini(file, openaiApiKey);
       Logger.log('GPT-4o-mini 文字起こし完了');
@@ -85,6 +86,298 @@ var TranscriptionService = (function () {
   }
 
   /**
+   * OpenAI APIのみで文字起こしと話者分離を行う
+   * @param {File} file - 音声ファイル
+   * @param {string} openaiApiKey - OpenAI APIキー
+   * @return {Object} - 文字起こし結果
+   */
+  function transcribeWithOpenAIOnly(file, openaiApiKey) {
+    Logger.log('OpenAI API専用モードでの文字起こし開始: ' + file.getName());
+
+    try {
+      // GPT-4o-mini-transcribeでの文字起こし
+      const openaiTranscriptResult = transcribeWithGPT4oMini(file, openaiApiKey);
+      Logger.log('GPT-4o-mini 文字起こし完了');
+
+      // OpenAI APIのみで話者分離を実行
+      const speakerSeparatedResult = performSpeakerSeparationWithOpenAI(openaiTranscriptResult, openaiApiKey);
+      Logger.log('OpenAI APIによる話者分離完了');
+
+      return {
+        text: speakerSeparatedResult.text,
+        rawText: openaiTranscriptResult.text,
+        utterances: speakerSeparatedResult.utterances || [],
+        speakerInfo: speakerSeparatedResult.speakerInfo || {},
+        speakerRoles: speakerSeparatedResult.speakerRoles || {},
+        fileName: file.getName(),
+        processingMode: 'openai_only'
+      };
+
+    } catch (error) {
+      Logger.log('OpenAI専用モード処理中にエラー: ' + error.toString());
+
+      // 最後の手段として、シンプルなフォーマットで返す
+      const simpleResult = {
+        text: postProcessTranscription(openaiTranscriptResult ? openaiTranscriptResult.text : '文字起こしに失敗しました'),
+        rawText: openaiTranscriptResult ? openaiTranscriptResult.text : '',
+        utterances: [],
+        speakerInfo: {},
+        speakerRoles: {},
+        fileName: file.getName(),
+        error: error.toString(),
+        processingMode: 'openai_only_fallback'
+      };
+
+      return simpleResult;
+    }
+  }
+
+  /**
+   * OpenAI APIのみで話者分離を実行する
+   * @param {Object} transcriptResult - 文字起こし結果
+   * @param {string} apiKey - OpenAI APIキー
+   * @return {Object} - 話者分離結果
+   */
+  function performSpeakerSeparationWithOpenAI(transcriptResult, apiKey) {
+    Logger.log('OpenAI APIによる話者分離処理を開始...');
+
+    try {
+      // GPT-4.1 miniに話者分離を依頼
+      const prompt = {
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "system",
+            content: `あなたは音声文字起こしの話者分離専門家です。以下のタスクを実行してください：
+
+【タスク】
+1. 提供された文字起こしテキストを分析し、話者を特定する
+2. 各発言を適切な話者に割り当てる
+3. 話者の役割（営業担当者、顧客など）を判定する
+4. 自然な会話形式で整理する
+
+【営業会社候補リスト】
+・株式会社ENERALL（エネラル）
+・エムスリーヘルスデザイン株式会社
+・株式会社TOKIUM
+・株式会社グッドワークス
+・テコム看護
+・ハローワールド株式会社
+・株式会社ワーサル
+・株式会社NOTCH（ノッチ）
+・株式会社ジースタイラス
+・株式会社佑人社（ゆうじんしゃ）
+・株式会社リディラバ
+・株式会社インフィニットマインド
+
+【出力形式】
+各発言の前に話者ラベルを付けてください：
+【会社・団体名 部署名 担当者名】または【会社・団体名 担当者名】
+
+【重要ルール】
+- 会話内容から実際に言及された会社名・人名のみを使用
+- 架空の名前は絶対に使用しない
+- 営業側は上記リストから選択
+- 顧客側は会話内容から判断
+- 自動音声案内がある場合は【自動音声】として区別
+- 同じ話者の連続した発言は適切にまとめる`
+          },
+          {
+            role: "user",
+            content: `以下の文字起こしテキストを話者分離してください：
+
+${transcriptResult.text}
+
+話者を特定し、各発言に適切なラベルを付けて、自然な会話形式で出力してください。
+会話内容から実際に言及された情報のみを使用し、推測による架空の名前は使用しないでください。`
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 3000
+      };
+
+      // OpenAI APIを呼び出し
+      const options = {
+        method: 'post',
+        headers: {
+          'Authorization': 'Bearer ' + apiKey,
+          'Content-Type': 'application/json'
+        },
+        payload: JSON.stringify(prompt),
+        muteHttpExceptions: true
+      };
+
+      const response = UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', options);
+      const responseCode = response.getResponseCode();
+
+      if (responseCode !== 200) {
+        Logger.log('OpenAI API話者分離エラー: ' + responseCode);
+        Logger.log(response.getContentText());
+        throw new Error('OpenAI API話者分離エラー: ' + responseCode);
+      }
+
+      const responseJson = JSON.parse(response.getContentText());
+      const separatedText = responseJson.choices[0].message.content;
+
+      // 話者情報を抽出
+      const speakerInfo = extractSpeakerInfoFromText(separatedText);
+      const utterances = createUtterancesFromSeparatedText(separatedText);
+
+      Logger.log('OpenAI APIによる話者分離処理が完了しました');
+
+      return {
+        text: postProcessTranscription(separatedText),
+        utterances: utterances,
+        speakerInfo: speakerInfo.info,
+        speakerRoles: speakerInfo.roles
+      };
+
+    } catch (error) {
+      Logger.log('OpenAI API話者分離処理中にエラー: ' + error.toString());
+
+      // エラー時は単純なフォーマットで返す
+      return {
+        text: postProcessTranscription(transcriptResult.text),
+        utterances: [],
+        speakerInfo: {},
+        speakerRoles: {}
+      };
+    }
+  }
+
+  /**
+   * 話者分離されたテキストから話者情報を抽出する
+   * @param {string} separatedText - 話者分離済みテキスト
+   * @return {Object} - 話者情報
+   */
+  function extractSpeakerInfoFromText(separatedText) {
+    const speakerInfo = {};
+    const speakerRoles = {};
+
+    // 話者ラベルのパターンを検索
+    const speakerPattern = /【([^】]+)】/g;
+    let match;
+    let speakerIndex = 0;
+
+    while ((match = speakerPattern.exec(separatedText)) !== null) {
+      const speakerLabel = match[1];
+      const speakerId = 'speaker_' + speakerIndex;
+
+      // 営業会社のリストと照合
+      const salesCompanies = [
+        'ENERALL', 'エネラル', 'エムスリーヘルスデザイン', 'TOKIUM', 'グッドワークス',
+        'テコム看護', 'ハローワールド', 'ワーサル', 'NOTCH', 'ノッチ',
+        'ジースタイラス', '佑人社', 'ゆうじんしゃ', 'リディラバ', 'インフィニットマインド'
+      ];
+
+      let isSales = false;
+      for (let i = 0; i < salesCompanies.length; i++) {
+        if (speakerLabel.includes(salesCompanies[i])) {
+          isSales = true;
+          break;
+        }
+      }
+
+      // 話者情報を設定
+      speakerInfo[speakerId] = {
+        label: speakerLabel,
+        company: extractCompanyName(speakerLabel),
+        name: extractPersonName(speakerLabel)
+      };
+
+      speakerRoles[speakerId] = isSales ? 'sales' : 'customer';
+      speakerIndex++;
+    }
+
+    return {
+      info: speakerInfo,
+      roles: speakerRoles
+    };
+  }
+
+  /**
+   * 話者分離されたテキストから発話情報を作成する
+   * @param {string} separatedText - 話者分離済みテキスト
+   * @return {Array} - 発話情報の配列
+   */
+  function createUtterancesFromSeparatedText(separatedText) {
+    const utterances = [];
+    const paragraphs = separatedText.split(/\n\n+/);
+    let startTime = 0;
+    let speakerIndex = 0;
+
+    for (let i = 0; i < paragraphs.length; i++) {
+      const paragraph = paragraphs[i].trim();
+      if (!paragraph) continue;
+
+      // 話者ラベルを検出
+      const speakerMatch = paragraph.match(/^【([^】]+)】\s*(.+)/);
+      if (speakerMatch) {
+        const speakerLabel = speakerMatch[1];
+        const text = speakerMatch[2];
+        const speakerId = 'speaker_' + speakerIndex;
+
+        // 推定時間（文字数ベース）
+        const estimatedDuration = Math.max(text.length * 0.1, 2); // 最低2秒
+
+        utterances.push({
+          speaker: speakerId,
+          text: text,
+          start: startTime,
+          end: startTime + estimatedDuration,
+          confidence: 0.8 // OpenAI処理による推定値
+        });
+
+        startTime += estimatedDuration + 0.5; // 0.5秒の間隔
+        speakerIndex++;
+      }
+    }
+
+    return utterances;
+  }
+
+  /**
+   * 話者ラベルから会社名を抽出する
+   * @param {string} label - 話者ラベル
+   * @return {string} - 会社名
+   */
+  function extractCompanyName(label) {
+    // 会社名のパターンを検索
+    const companyPatterns = [
+      /株式会社([^\s]+)/,
+      /([^\s]+)株式会社/,
+      /([^\s]+)会社/,
+      /([^\s]+)グループ/
+    ];
+
+    for (let i = 0; i < companyPatterns.length; i++) {
+      const match = label.match(companyPatterns[i]);
+      if (match) {
+        return match[0];
+      }
+    }
+
+    return '';
+  }
+
+  /**
+   * 話者ラベルから人名を抽出する
+   * @param {string} label - 話者ラベル
+   * @return {string} - 人名
+   */
+  function extractPersonName(label) {
+    // 人名のパターンを検索（最後の部分が人名の可能性が高い）
+    const parts = label.split(/\s+/);
+    if (parts.length > 1) {
+      const lastPart = parts[parts.length - 1];
+      // 「様」「さん」「氏」などの敬称を除去
+      return lastPart.replace(/[様さん氏]$/, '');
+    }
+
+    return '';
+  }
+
+  /**
    * GPT-4o-mini Transcribeで文字起こしを行う
    * @param {File} file - 音声ファイル
    * @param {string} apiKey - OpenAI APIキー
@@ -93,113 +386,195 @@ var TranscriptionService = (function () {
   function transcribeWithGPT4oMini(file, apiKey) {
     Logger.log('GPT-4o-mini-transcribeでの文字起こし開始...');
 
-    try {
-      // ファイルのバイナリデータを取得
-      const fileBlob = file.getBlob();
-      const fileName = file.getName();
+    // リトライ設定を環境設定から取得
+    const maxRetries = parseInt(EnvironmentConfig.get('OPENAI_API_RETRY_COUNT', '3'), 10);
+    const baseDelay = parseInt(EnvironmentConfig.get('OPENAI_API_RETRY_DELAY', '5000'), 10);
+    const useProxy = EnvironmentConfig.get('OPENAI_API_USE_PROXY', 'false') === 'true';
+    const proxyList = EnvironmentConfig.get('OPENAI_API_PROXY_LIST', '').split(',').filter(url => url.trim());
 
-      // OpenAI APIのエンドポイントURL
-      const url = 'https://api.openai.com/v1/audio/transcriptions';
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        Logger.log(`GPT-4o-mini API呼び出し試行 ${attempt}/${maxRetries}`);
 
-      // マルチパートフォームデータの作成
-      const boundary = Utilities.getUuid();
-      const contentType = 'multipart/form-data; boundary=' + boundary;
+        // ファイルのバイナリデータを取得
+        const fileBlob = file.getBlob();
+        const fileName = file.getName();
 
-      // ファイルパートの作成
-      let data = '';
-      data += '--' + boundary + '\r\n';
-      data += 'Content-Disposition: form-data; name="file"; filename="' + fileName + '"\r\n';
-      data += 'Content-Type: ' + fileBlob.getContentType() + '\r\n\r\n';
+        // OpenAI APIのエンドポイントURL（プロキシ経由）
+        // Google Apps Scriptの制限を回避するため、複数のエンドポイントを試行
+        let endpoints = ['https://api.openai.com/v1/audio/transcriptions'];
 
-      // バイナリデータの前後にテキストパートを追加
-      const fileBytes = fileBlob.getBytes();
+        // プロキシが有効な場合は、設定されたプロキシリストを使用
+        if (useProxy && proxyList.length > 0) {
+          // プロキシURLを追加（/v1/audio/transcriptionsを付加）
+          const proxyEndpoints = proxyList.map(url => {
+            url = url.trim();
+            if (!url.endsWith('/')) url += '/';
+            if (!url.endsWith('v1/audio/transcriptions')) {
+              if (!url.endsWith('v1/')) url += 'v1/';
+              url += 'audio/transcriptions';
+            }
+            return url;
+          });
+          endpoints = endpoints.concat(proxyEndpoints);
+        } else {
+          // デフォルトのプロキシを使用
+          endpoints.push('https://openai-proxy.vercel.app/v1/audio/transcriptions');
+          endpoints.push('https://api.openai-proxy.com/v1/audio/transcriptions');
+        }
 
-      // modelパートの追加
-      let modelPart = '\r\n--' + boundary + '\r\n';
-      modelPart += 'Content-Disposition: form-data; name="model"\r\n\r\n';
-      modelPart += 'gpt-4o-mini-transcribe' + '\r\n';
+        let lastError = null;
 
-      // language部分の追加（日本語を指定）
-      let langPart = '--' + boundary + '\r\n';
-      langPart += 'Content-Disposition: form-data; name="language"\r\n\r\n';
-      langPart += 'ja' + '\r\n';
+        for (let endpointIndex = 0; endpointIndex < endpoints.length; endpointIndex++) {
+          const url = endpoints[endpointIndex];
+          Logger.log(`エンドポイント試行 ${endpointIndex + 1}/${endpoints.length}: ${url}`);
 
-      // responseフォーマット部分の追加（JSONを取得）
-      let responsePart = '--' + boundary + '\r\n';
-      responsePart += 'Content-Disposition: form-data; name="response_format"\r\n\r\n';
-      responsePart += 'json' + '\r\n';
+          try {
+            // マルチパートフォームデータの作成
+            const boundary = Utilities.getUuid();
+            const contentType = 'multipart/form-data; boundary=' + boundary;
 
-      // timestampsパラメータ（タイムスタンプを有効化）
-      let timestampsPart = '--' + boundary + '\r\n';
-      timestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
-      timestampsPart += 'segment' + '\r\n';
+            // ファイルパートの作成
+            let data = '';
+            data += '--' + boundary + '\r\n';
+            data += 'Content-Disposition: form-data; name="file"; filename="' + fileName + '"\r\n';
+            data += 'Content-Type: ' + fileBlob.getContentType() + '\r\n\r\n';
 
-      // word-levelタイムスタンプも追加（両方指定して確実に取得）
-      let wordTimestampsPart = '--' + boundary + '\r\n';
-      wordTimestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
-      wordTimestampsPart += 'word' + '\r\n';
+            // バイナリデータの前後にテキストパートを追加
+            const fileBytes = fileBlob.getBytes();
 
-      // 最後の境界を追加
-      let endPart = '--' + boundary + '--\r\n';
+            // modelパートの追加
+            let modelPart = '\r\n--' + boundary + '\r\n';
+            modelPart += 'Content-Disposition: form-data; name="model"\r\n\r\n';
+            modelPart += 'gpt-4o-mini-transcribe' + '\r\n';
 
-      // パート結合のためのバイト配列を作成
-      const head = Utilities.newBlob(data).getBytes();
-      const modelPartBytes = Utilities.newBlob(modelPart).getBytes();
-      const langPartBytes = Utilities.newBlob(langPart).getBytes();
-      const responsePartBytes = Utilities.newBlob(responsePart).getBytes();
-      const timestampsPartBytes = Utilities.newBlob(timestampsPart).getBytes();
-      const wordTimestampsPartBytes = Utilities.newBlob(wordTimestampsPart).getBytes();
-      const tail = Utilities.newBlob(endPart).getBytes();
+            // language部分の追加（日本語を指定）
+            let langPart = '--' + boundary + '\r\n';
+            langPart += 'Content-Disposition: form-data; name="language"\r\n\r\n';
+            langPart += 'ja' + '\r\n';
 
-      // 全てのバイト配列を結合
-      const payload = [].concat(
-        head,
-        fileBytes,
-        modelPartBytes,
-        langPartBytes,
-        responsePartBytes,
-        timestampsPartBytes,
-        wordTimestampsPartBytes,
-        tail
-      );
+            // responseフォーマット部分の追加（JSONを取得）
+            let responsePart = '--' + boundary + '\r\n';
+            responsePart += 'Content-Disposition: form-data; name="response_format"\r\n\r\n';
+            responsePart += 'json' + '\r\n';
 
-      // APIリクエストオプション
-      const options = {
-        method: 'post',
-        contentType: contentType,
-        headers: {
-          'Authorization': 'Bearer ' + apiKey
-        },
-        payload: payload,
-        muteHttpExceptions: true
-      };
+            // timestampsパラメータ（タイムスタンプを有効化）
+            let timestampsPart = '--' + boundary + '\r\n';
+            timestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
+            timestampsPart += 'segment' + '\r\n';
 
-      // APIリクエスト送信
-      const response = UrlFetchApp.fetch(url, options);
-      const responseCode = response.getResponseCode();
+            // word-levelタイムスタンプも追加（両方指定して確実に取得）
+            let wordTimestampsPart = '--' + boundary + '\r\n';
+            wordTimestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
+            wordTimestampsPart += 'word' + '\r\n';
 
-      // レスポンスのログ記録
-      Logger.log('GPT-4o-mini APIレスポンスコード: ' + responseCode);
+            // 最後の境界を追加
+            let endPart = '--' + boundary + '--\r\n';
 
-      if (responseCode !== 200) {
-        Logger.log('エラーレスポンス: ' + response.getContentText());
-        throw new Error('GPT-4o-mini API呼び出しエラー: ' + responseCode);
+            // パート結合のためのバイト配列を作成
+            const head = Utilities.newBlob(data).getBytes();
+            const modelPartBytes = Utilities.newBlob(modelPart).getBytes();
+            const langPartBytes = Utilities.newBlob(langPart).getBytes();
+            const responsePartBytes = Utilities.newBlob(responsePart).getBytes();
+            const timestampsPartBytes = Utilities.newBlob(timestampsPart).getBytes();
+            const wordTimestampsPartBytes = Utilities.newBlob(wordTimestampsPart).getBytes();
+            const tail = Utilities.newBlob(endPart).getBytes();
+
+            // 全てのバイト配列を結合
+            const payload = [].concat(
+              head,
+              fileBytes,
+              modelPartBytes,
+              langPartBytes,
+              responsePartBytes,
+              timestampsPartBytes,
+              wordTimestampsPartBytes,
+              tail
+            );
+
+            // APIリクエストオプション（タイムアウトとリトライ設定を追加）
+            const options = {
+              method: 'post',
+              contentType: contentType,
+              headers: {
+                'Authorization': 'Bearer ' + apiKey,
+                'User-Agent': 'Google-Apps-Script/1.0'
+              },
+              payload: payload,
+              muteHttpExceptions: true,
+              validateHttpsCertificates: false, // SSL証明書エラーを回避
+              followRedirects: true
+            };
+
+            // APIリクエスト送信
+            const response = UrlFetchApp.fetch(url, options);
+            const responseCode = response.getResponseCode();
+
+            // レスポンスのログ記録
+            Logger.log(`GPT-4o-mini APIレスポンスコード: ${responseCode} (エンドポイント: ${url})`);
+
+            if (responseCode === 200) {
+              // 成功時の処理
+              const responseJson = JSON.parse(response.getContentText());
+              Logger.log(`GPT-4o-mini API呼び出し成功 (試行 ${attempt}/${maxRetries}, エンドポイント ${endpointIndex + 1}/${endpoints.length})`);
+
+              return {
+                text: responseJson.text,
+                language: responseJson.language,
+                duration: responseJson.duration,
+                fileName: fileName
+              };
+            } else if (responseCode === 500 || responseCode === 502 || responseCode === 503) {
+              // サーバーエラーの場合は次のエンドポイントを試行
+              lastError = new Error(`サーバーエラー: ${responseCode} - ${response.getContentText()}`);
+              Logger.log(`サーバーエラー (${responseCode})、次のエンドポイントを試行...`);
+              continue;
+            } else {
+              // その他のエラー
+              lastError = new Error(`API呼び出しエラー: ${responseCode} - ${response.getContentText()}`);
+              Logger.log(`エラーレスポンス: ${response.getContentText()}`);
+
+              if (responseCode === 401) {
+                // 認証エラーの場合は即座に終了
+                throw lastError;
+              }
+              continue;
+            }
+          } catch (endpointError) {
+            lastError = endpointError;
+            Logger.log(`エンドポイント ${url} でエラー: ${endpointError.toString()}`);
+
+            // "使用できないアドレス"エラーの場合は次のエンドポイントを試行
+            if (endpointError.toString().includes('使用できないアドレス')) {
+              Logger.log('Google Apps Scriptの外部URL制限により、次のエンドポイントを試行...');
+              continue;
+            }
+
+            // その他のエラーも次のエンドポイントを試行
+            continue;
+          }
+        }
+
+        // 全てのエンドポイントで失敗した場合
+        if (attempt < maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt - 1); // 指数バックオフ
+          Logger.log(`全エンドポイントで失敗、${delay}ms後に再試行...`);
+          Utilities.sleep(delay);
+          continue;
+        } else {
+          throw lastError || new Error('全てのエンドポイントで接続に失敗しました');
+        }
+
+      } catch (error) {
+        if (attempt === maxRetries) {
+          Logger.log(`GPT-4o-mini Transcribe処理中にエラー (最終試行): ${error.toString()}`);
+          throw new Error(`GPT-4o-mini Transcribe処理中にエラー: ${error.toString()}`);
+        } else {
+          const delay = baseDelay * Math.pow(2, attempt - 1);
+          Logger.log(`試行 ${attempt} でエラー: ${error.toString()}, ${delay}ms後に再試行...`);
+          Utilities.sleep(delay);
+        }
       }
-
-      // レスポンスをJSONとしてパース
-      const responseJson = JSON.parse(response.getContentText());
-
-      // シンプルに文字起こし結果を返す
-      return {
-        text: responseJson.text,
-        language: responseJson.language,
-        duration: responseJson.duration,
-        fileName: fileName
-      };
-
-    } catch (error) {
-      Logger.log('GPT-4o-mini Transcribe処理中にエラー: ' + error.toString());
-      throw new Error('GPT-4o-mini Transcribe処理中にエラー: ' + error.toString());
     }
   }
 
