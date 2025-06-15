@@ -16,7 +16,7 @@ var InformationExtractor = (function () {
 
     // APIキーが直接渡されない場合は設定から取得
     if (!openaiApiKey) {
-      var settings = getSystemSettings();
+      var settings = ConfigManager.getConfig();
       openaiApiKey = settings.OPENAI_API_KEY;
     }
 

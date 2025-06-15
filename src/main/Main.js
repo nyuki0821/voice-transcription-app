@@ -23,32 +23,7 @@
 
 // グローバル変数
 var SPREADSHEET_ID = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
-var settings = getSystemSettings();
-var NOTIFICATION_HOURS = [9, 12, 19]; // 通知を送信する時間（9時、12時、19時）
-
-/**
- * システム設定を取得する関数（下位互換性のため残す）
- * 新しいコードではConfigManager.getConfig()を使用すること
- */
-function getSystemSettings() {
-  return ConfigManager.getConfig();
-}
-
-/**
- * デフォルト設定を返す関数（下位互換性のため残す）
- * 新しいコードではConfigManager.getDefaultConfig()を使用すること
- */
-function getDefaultSettings() {
-  return ConfigManager.getDefaultConfig();
-}
-
-/**
- * 設定をロードする関数（下位互換性のため残す）
- * 新しいコードではConfigManager.getConfig()を使用すること
- */
-function loadSettings() {
-  return ConfigManager.getConfig();
-}
+var settings = ConfigManager.getConfig();
 
 /**
  * ファイルからメタデータを抽出する関数
@@ -532,8 +507,8 @@ function processBatch() {
     var localSettings = getSystemSettings();
 
     // APIキーと処理対象フォルダの確認
-    if (!localSettings.ASSEMBLYAI_API_KEY) {
-      throw new Error('Assembly AI APIキーが設定されていません');
+    if (!localSettings.OPENAI_API_KEY) {
+      throw new Error('OpenAI APIキーが設定されていません');
     }
 
     if (!localSettings.SOURCE_FOLDER_ID) {
@@ -580,7 +555,6 @@ function processBatch() {
         try {
           transcriptionResult = TranscriptionService.transcribe(
             file,
-            localSettings.ASSEMBLYAI_API_KEY,
             localSettings.OPENAI_API_KEY
           );
 
@@ -849,10 +823,10 @@ function processBatch() {
               fileEndTimeStr
             );
 
-            // エラーでも最低限の情報をスプレッドシートに書き込む
+            // エラー情報をログに記録（call_recordsシートには出力しない）
             try {
               if (errorMetadata && errorMetadata.recordId && errorMetadata.callDate && errorMetadata.callTime) {
-                // スプレッドシートに書き込み
+                // エラー情報の構築（ログ用）
                 var errorCallData = {
                   fileName: file.getName(),
                   recordId: errorMetadata.recordId,
@@ -872,16 +846,13 @@ function processBatch() {
                   transcription: 'エラー発生：' + error.toString()
                 };
 
-                // call_recordsシートに出力
-                var processedSheetId = localSettings.PROCESSED_SHEET_ID || '';
-                Logger.log('エラー情報の保存先: PROCESSED_SHEET_ID=' + processedSheetId);
-                saveCallRecordToSheet(errorCallData, processedSheetId, 'call_records');
-                Logger.log('エラー情報をスプレッドシートに保存しました');
+                // エラー時はcall_recordsシートに出力しない（ログのみ）
+                Logger.log('エラー情報: ' + JSON.stringify(errorCallData));
               } else {
                 Logger.log('必須メタデータが不足しているためスプレッドシートへの書き込みをスキップ');
               }
-            } catch (saveError) {
-              Logger.log('エラー情報のスプレッドシート保存中にエラー: ' + saveError.toString());
+            } catch (logError) {
+              Logger.log('エラー情報のログ出力中にエラー: ' + logError.toString());
             }
           } else {
             Logger.log('エラー処理中にrecord_idが特定できませんでした: ' + file.getName());
@@ -951,14 +922,11 @@ function processBatch() {
                     transcription: '最終手段による処理：' + error.toString()
                   };
 
-                  // call_recordsシートに出力
-                  var processedSheetId = localSettings.PROCESSED_SHEET_ID || '';
-                  Logger.log('最終手段の情報保存先: PROCESSED_SHEET_ID=' + processedSheetId);
-                  saveCallRecordToSheet(lastChanceData, processedSheetId, 'call_records');
-                  Logger.log('最終手段の情報をスプレッドシートに保存しました');
+                  // エラー時はcall_recordsシートに出力しない（ログのみ）
+                  Logger.log('最終手段処理情報: ' + JSON.stringify(lastChanceData));
                 }
-              } catch (lastSaveError) {
-                Logger.log('最終手段のスプレッドシート保存中にエラー: ' + lastSaveError.toString());
+              } catch (lastLogError) {
+                Logger.log('最終手段処理のログ出力中にエラー: ' + lastLogError.toString());
               }
             }
           } catch (lastError) {

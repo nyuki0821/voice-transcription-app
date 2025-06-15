@@ -7,7 +7,7 @@ Zoom通話録音ファイルを文字起こしし、情報を抽出・分析す�
 - Zoom通話録音ファイルの自動処理
 - Webhookによるリアルタイムメタ情報収集
 - 定期的な録音ファイル取得
-- AssemblyAIを使用した高精度な文字起こし
+- OpenAI Whisperを使用した高精度な文字起こし
 - OpenAIを使用した会話内容の分析・要約
 - スプレッドシートへの結果一元管理
 - **包括的なテストスイート機能**
@@ -60,7 +60,7 @@ Zoom通話録音ファイルを文字起こしし、情報を抽出・分析す�
 |------------|--------|----------|------|
 | 録音完了時 即時 | Webhook → メタ記録 | **Cloud Functions** | HMAC 検証 / Sheets へ 1 行追記 (録音 ID, DL URL, 時刻, 電話番号, Duration等) |
 | 30 分おき | 録音ファイル DL | **GAS `checkAndFetchZoomRecordings`** | Zoom API で 直近 2h をリスト → 未取得を Drive 保存 |
-| 10 分おき | 文字起こし & 要約 | **GAS `processBatchOnSchedule`** | AssemblyAI → OpenAI (任意) → Sheets に貼付 |
+| 10 分おき | 文字起こし & 要約 | **GAS `processBatchOnSchedule`** | Whisper → GPT-4o-mini (任意) → Sheets に貼付 |
 | 日曜 03:00 | リテンション | GAS | Drive 内 90 日超ファイル削除 |
 
 ## ログステータス管理
@@ -156,7 +156,7 @@ voice-transcription-app/
 - Google アカウント
 - Google Cloud Platform プロジェクト
 - Zoom開発者アカウント (`phone:read:recordings` スコープ 付き S2S OAuth アプリ)
-- AssemblyAI APIキー
+- OpenAI APIキー（Whisper用）
 - OpenAI APIキー（オプション）
 - Clasp CLI（ローカル開発用）
 
@@ -214,8 +214,7 @@ voice-transcription-app/
 | 設定項目 | 説明 |
 |---------|------|
 | RECORDINGS_SHEET_ID | 録音メタデータ管理シートID |
-| ASSEMBLYAI_API_KEY | AssemblyAI API キー |
-| OPENAI_API_KEY | OpenAI API キー（オプション） |
+| OPENAI_API_KEY | OpenAI API キー（Whisper + GPT-4o-mini用） |
 | SOURCE_FOLDER_ID | 未処理音声ファイル保存フォルダID |
 | PROCESSING_FOLDER_ID | 処理中フォルダID |
 | COMPLETED_FOLDER_ID | 完了フォルダID |
@@ -562,7 +561,7 @@ function detectPartialFailures() {
 
 #### 1. リアルタイムエラー検知
 - **OpenAI APIエラー**: クォータ制限、APIキーエラー、レスポンスエラーを即座に検知
-- **文字起こしエラー**: GPT-4o-mini、AssemblyAIの処理エラーを検知
+- **文字起こしエラー**: Whisper、GPT-4o-miniの処理エラーを検知
 - **部分的失敗**: エラーが発生しても処理が続行されるケースを検知
 
 #### 2. 部分的失敗の自動検知・復旧
@@ -647,7 +646,7 @@ TriggerManager.setupPartialFailureDetectionTrigger();
 ```
 ENHANCE_WITH_OPENAI = false
 ```
-に設定すると、OpenAI APIを使わずにAssemblyAIのみで処理を続行できます。
+に設定すると、会話洗練処理をスキップしてWhisperのみで処理を続行できます。
 
 ### トラブルシューティング
 

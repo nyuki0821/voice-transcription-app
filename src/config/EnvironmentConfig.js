@@ -118,7 +118,6 @@ var EnvironmentConfig = (function () {
 
       // 既存互換用
       SPREADSHEET_ID: '',
-      ASSEMBLYAI_API_KEY: '',
       OPENAI_API_KEY: '',
       SOURCE_FOLDER_ID: '',
       PROCESSING_FOLDER_ID: '',

@@ -16,7 +16,6 @@ function testConfigRetrieval() {
 
     // 主要設定の確認
     var keyChecks = [
-      'ASSEMBLYAI_API_KEY',
       'OPENAI_API_KEY',
       'SOURCE_FOLDER_ID',
       'RECORDINGS_SHEET_ID',
@@ -200,7 +199,7 @@ function testDefaultConfig() {
     Logger.log("  ADMIN_EMAILS: " + JSON.stringify(defaultConfig.ADMIN_EMAILS));
 
     // 空文字列のデフォルト値確認
-    var emptyDefaults = ['ASSEMBLYAI_API_KEY', 'SOURCE_FOLDER_ID', 'RECORDINGS_SHEET_ID'];
+    var emptyDefaults = ['OPENAI_API_KEY', 'SOURCE_FOLDER_ID', 'RECORDINGS_SHEET_ID'];
     for (var i = 0; i < emptyDefaults.length; i++) {
       var key = emptyDefaults[i];
       var value = defaultConfig[key];
@@ -224,11 +223,9 @@ function emergencyConfigForGASRestrictions() {
 
     // 現在の設定を確認
     var openaiApiKey = ConfigManager.get('OPENAI_API_KEY');
-    var assemblyAiApiKey = ConfigManager.get('ASSEMBLYAI_API_KEY');
 
     Logger.log("現在のAPIキー設定状況:");
     Logger.log("OpenAI APIキー: " + (openaiApiKey ? "設定済み" : "未設定"));
-    Logger.log("AssemblyAI APIキー: " + (assemblyAiApiKey ? "設定済み" : "未設定"));
 
     // プロキシ設定を追加
     var configSpreadsheetId = PropertiesService.getScriptProperties().getProperty('CONFIG_SPREADSHEET_ID');
@@ -249,7 +246,7 @@ function emergencyConfigForGASRestrictions() {
     var emergencySettings = [
       ['OPENAI_API_PROXY_ENABLED', 'true'],
       ['OPENAI_API_PROXY_URLS', 'https://openai-api-proxy.herokuapp.com,https://api-proxy.openai-community.com'],
-      ['ASSEMBLYAI_FALLBACK_ONLY', 'true'],
+      ['WHISPER_ONLY_MODE', 'true'],
       ['GAS_URL_RESTRICTION_MODE', 'true'],
       ['API_RETRY_MAX_ATTEMPTS', '5'],
       ['API_RETRY_BASE_DELAY', '10000']
@@ -296,7 +293,7 @@ function emergencyConfigForGASRestrictions() {
     Logger.log("緊急設定変更が完了しました");
     Logger.log("システムは以下のモードで動作します:");
     Logger.log("- OpenAI APIプロキシ経由での接続");
-    Logger.log("- AssemblyAIフォールバック優先");
+    Logger.log("- Whisperベース処理優先");
     Logger.log("- 拡張リトライ機能");
 
     return "緊急設定変更が正常に完了しました";
@@ -316,7 +313,6 @@ function diagnoseGASURLRestrictions() {
 
     var testUrls = [
       'https://api.openai.com/v1/models',
-      'https://api.assemblyai.com/v2/transcript',
       'https://httpbin.org/get',
       'https://jsonplaceholder.typicode.com/posts/1'
     ];
@@ -374,7 +370,7 @@ function diagnoseGASURLRestrictions() {
     if (restrictionDetected) {
       Logger.log("\n推奨対応:");
       Logger.log("1. emergencyConfigForGASRestrictions() を実行");
-      Logger.log("2. AssemblyAI単体での処理に切り替え");
+      Logger.log("2. Whisperベース処理への切り替え");
       Logger.log("3. プロキシサーバーの設定");
     }
 
@@ -428,7 +424,7 @@ function setupCustomOpenAIProxy() {
       ['OPENAI_API_USER_AGENT', 'Google-Apps-Script-Transcription/1.0'],
       ['GAS_URL_RESTRICTION_BYPASS', 'true'],
       ['FORCE_OPENAI_USAGE', 'true'],
-      ['DISABLE_ASSEMBLYAI_FALLBACK', 'true']
+      ['ENABLE_CONVERSATION_REFINEMENT', 'true']
     ];
 
     // 設定を追加/更新
@@ -473,7 +469,7 @@ function setupCustomOpenAIProxy() {
     Logger.log("システムは以下のモードで動作します:");
     Logger.log("- OpenAI API優先モード");
     Logger.log("- 6つのプロキシサーバーによる冗長化");
-    Logger.log("- AssemblyAIフォールバック無効化");
+    Logger.log("- Whisperベース処理専用");
     Logger.log("- 拡張リトライ機能（最大5回）");
 
     return "独自プロキシサーバー設定が正常に完了しました";
@@ -593,15 +589,14 @@ function enableOpenAIOnlyMode() {
       return "エラー: settingsシートが見つかりません";
     }
 
-    // OpenAI専用モードの設定
-    var onlyModeSettings = [
-      ['OPENAI_ONLY_MODE', 'true'],
-      ['DISABLE_ASSEMBLYAI', 'true'],
-      ['FORCE_OPENAI_TRANSCRIPTION', 'true'],
-      ['OPENAI_RETRY_AGGRESSIVE', 'true'],
-      ['OPENAI_FALLBACK_TO_WHISPER', 'true'],
-      ['ASSEMBLYAI_SPEAKER_SEPARATION', 'false'],
-      ['USE_OPENAI_FOR_SPEAKER_DETECTION', 'true']
+    // Whisperベース専用モードの設定
+    var whisperModeSettings = [
+      ['WHISPER_ONLY_MODE', 'true'],
+      ['FORCE_WHISPER_TRANSCRIPTION', 'true'],
+      ['WHISPER_RETRY_AGGRESSIVE', 'true'],
+      ['USE_GPT4O_MINI_FOR_SPEAKER_SEPARATION', 'true'],
+      ['ENABLE_GPT41_MINI_REFINEMENT', 'true'],
+      ['WHISPER_CHUNK_SIZE_OPTIMIZATION', 'true']
     ];
 
     // 設定を追加/更新
@@ -615,9 +610,9 @@ function enableOpenAIOnlyMode() {
       return "エラー: settingsシートの形式が正しくありません";
     }
 
-    for (var i = 0; i < onlyModeSettings.length; i++) {
-      var key = onlyModeSettings[i][0];
-      var value = onlyModeSettings[i][1];
+    for (var i = 0; i < whisperModeSettings.length; i++) {
+      var key = whisperModeSettings[i][0];
+      var value = whisperModeSettings[i][1];
 
       // 既存の設定を探す
       var found = false;
@@ -643,7 +638,7 @@ function enableOpenAIOnlyMode() {
     ConfigManager.clearCache();
 
     Logger.log("OpenAI API専用モードが有効になりました");
-    Logger.log("- AssemblyAIは完全に無効化されます");
+    Logger.log("- Whisperベース処理専用モード");
     Logger.log("- OpenAI APIのみで文字起こしを実行");
     Logger.log("- 話者分離もOpenAI APIで実行");
 

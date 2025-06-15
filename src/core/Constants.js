@@ -75,9 +75,25 @@ var Constants = (function () {
   // ファイル関連定数
   var FILE = {
     AUDIO_MIME_TYPES: ['audio/', 'application/octet-stream'],
-    AUDIO_EXTENSIONS: ['.mp3', '.wav', '.m4a'],
+    AUDIO_EXTENSIONS: ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.wma'],
     FILENAME_PATTERN: /zoom_call_\d+_([a-f0-9]+)\.mp3/i
   };
+
+  // 営業会社リスト
+  var SALES_COMPANIES = [
+    'ENERALL',
+    'エムスリーヘルスデザイン',
+    'TOKIUM',
+    'グッドワークス',
+    'テコム看護',
+    'ハローワールド',
+    'ワーサル',
+    'NOTCH',
+    'ジースタイラス',
+    '佑人社',
+    'リディラバ',
+    'インフィニットマインド'
+  ];
 
   // メール件名テンプレート
   var EMAIL_SUBJECTS = {
@@ -162,6 +178,7 @@ var Constants = (function () {
     NOTIFICATION_HOURS: NOTIFICATION_HOURS,
     PROCESSING: PROCESSING,
     FILE: FILE,
+    SALES_COMPANIES: SALES_COMPANIES,
     EMAIL_SUBJECTS: EMAIL_SUBJECTS,
     ERROR_MESSAGES: ERROR_MESSAGES,
 
