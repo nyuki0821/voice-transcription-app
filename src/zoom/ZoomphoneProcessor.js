@@ -278,6 +278,15 @@ var ZoomphoneProcessor = (function () {
       var now = new Date();
       var timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
+      // 列数の安全チェック
+      var maxColumns = sheet.getMaxColumns();
+      var requiredColumns = statusType === 'fetch' ? 10 : 12;
+      
+      if (maxColumns < requiredColumns) {
+        Logger.log('Recordingsシートの列数が不足しています（現在: ' + maxColumns + ', 必要: ' + requiredColumns + '）。列を追加します。');
+        sheet.insertColumnsAfter(maxColumns, requiredColumns - maxColumns);
+      }
+
       if (statusType === 'fetch') {
         // Status_fetchカラム（10列目）とtimestamp_fetch（9列目）を更新
         sheet.getRange(rowIndex, 10).setValue(status); // status_fetch

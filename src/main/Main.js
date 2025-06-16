@@ -445,6 +445,15 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       sheet.getRange(1, 1, 1, 15).setValues([
         ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'customer_phone_number', 'customer_name', 'call_status1', 'call_status2', 'reason_for_refusal', 'reason_for_refusal_category', 'reason_for_appointment', 'reason_for_appointment_category', 'summary', 'full_transcript']
       ]);
+    } else {
+      // 既存シートの列数を確認して不足があれば拡張
+      var currentColumns = sheet.getMaxColumns();
+      var requiredColumns = 15;
+      if (currentColumns < requiredColumns) {
+        Logger.log('シートの列数が不足しています（現在: ' + currentColumns + ', 必要: ' + requiredColumns + '）。列を追加します。');
+        sheet.insertColumnsAfter(currentColumns, requiredColumns - currentColumns);
+        Logger.log('列を追加しました。新しい列数: ' + sheet.getMaxColumns());
+      }
     }
 
     // 最終行の次の行に追加
@@ -473,12 +482,23 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
 
     Logger.log('挿入データ準備完了: record_id=' + callData.recordId + ', call_date=' + callData.callDate + ', call_time=' + callData.callTime);
 
+    // 行を追加前の安全チェック
+    var maxColumns = sheet.getMaxColumns();
+    if (rowData.length > maxColumns) {
+      Logger.log('データ列数がシート列数を超えています（データ: ' + rowData.length + ', シート: ' + maxColumns + '）。');
+      // 不足分の列を追加
+      sheet.insertColumnsAfter(maxColumns, rowData.length - maxColumns);
+      Logger.log('列を追加して調整しました。新しい列数: ' + sheet.getMaxColumns());
+    }
+
     // 行を追加
     try {
       sheet.getRange(newRow, 1, 1, rowData.length).setValues([rowData]);
       Logger.log('行の追加に成功しました');
     } catch (writeError) {
       Logger.log('行の追加中にエラー: ' + writeError.toString());
+      Logger.log('シート情報: 最大行=' + sheet.getMaxRows() + ', 最大列=' + sheet.getMaxColumns());
+      Logger.log('書き込み座標: 行=' + newRow + ', 列=1, データ列数=' + rowData.length);
       // エラーをそのまま上位に投げる
       throw writeError;
     }
@@ -1095,6 +1115,13 @@ function updateTranscriptionStatusByRecordId(recordId, status, processStart, pro
         ZoomphoneProcessor.updateRecordingStatus(rowIndex, status, 'transcription');
 
         // process_start（13列目）とprocess_end（14列目）を更新
+        // 列数チェック
+        var maxColumns = sheet.getMaxColumns();
+        if (maxColumns < 14) {
+          Logger.log('Recordingsシートの列数が不足しています（現在: ' + maxColumns + ', 必要: 14）。列を追加します。');
+          sheet.insertColumnsAfter(maxColumns, 14 - maxColumns);
+        }
+        
         if (processStart) sheet.getRange(rowIndex, 13).setValue(processStart);
         if (processEnd) sheet.getRange(rowIndex, 14).setValue(processEnd);
 
