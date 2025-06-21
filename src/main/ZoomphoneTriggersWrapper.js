@@ -81,18 +81,34 @@ function fetchZoomRecordingsManually(hours) {
  */
 function handleProcessingResult(result, processType) {
   // エラーが発生した場合の通知
-  if (result.error) {
+  if (result.error || (result.errorDetails && result.errorDetails.error > 0)) {
     var settings = getSystemSettings();
     if (settings && settings.ADMIN_EMAILS && settings.ADMIN_EMAILS.length > 0) {
-      var subject = "ZoomPhone録音取得エラー (" + processType + ")";
-      var body = "ZoomPhoneからの録音取得中にエラーが発生しました。\n\n" +
-        "処理タイプ: " + processType + "\n" +
-        "日時: " + new Date().toLocaleString() + "\n" +
-        "エラー: " + result.error + "\n\n" +
-        "システム管理者に連絡してください。";
+
+      // 統一フォーマットでエラー通知を作成
+      var errorDetails;
+
+      if (result.errorDetails) {
+        // 既に詳細なエラー情報がある場合はそれを使用
+        errorDetails = result.errorDetails;
+        errorDetails.processType = processType;
+      } else {
+        // 簡単なエラー情報の場合は統一フォーマットに変換
+        errorDetails = {
+          processType: processType,
+          total: 1,
+          success: 0,
+          error: 1,
+          errors: [{
+            message: result.error,
+            errorCode: 'GENERAL_ERROR',
+            timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+          }]
+        };
+      }
 
       for (var i = 0; i < settings.ADMIN_EMAILS.length; i++) {
-        GmailApp.sendEmail(settings.ADMIN_EMAILS[i], subject, body);
+        NotificationService.sendUnifiedErrorNotification(settings.ADMIN_EMAILS[i], errorDetails);
       }
     }
   }
@@ -109,15 +125,22 @@ function logAndNotifyError(error, processType) {
 
   var settings = getSystemSettings();
   if (settings && settings.ADMIN_EMAILS && settings.ADMIN_EMAILS.length > 0) {
-    var subject = "ZoomPhone録音取得エラー (" + processType + ")";
-    var body = "ZoomPhoneからの録音取得中にエラーが発生しました。\n\n" +
-      "処理タイプ: " + processType + "\n" +
-      "日時: " + new Date().toLocaleString() + "\n" +
-      "エラー: " + errorMsg + "\n\n" +
-      "システム管理者に連絡してください。";
+
+    // 統一フォーマットでエラー通知を作成
+    var errorDetails = {
+      processType: processType,
+      total: 1,
+      success: 0,
+      error: 1,
+      errors: [{
+        message: errorMsg,
+        errorCode: 'CRITICAL_ERROR',
+        timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+      }]
+    };
 
     for (var i = 0; i < settings.ADMIN_EMAILS.length; i++) {
-      GmailApp.sendEmail(settings.ADMIN_EMAILS[i], subject, body);
+      NotificationService.sendUnifiedErrorNotification(settings.ADMIN_EMAILS[i], errorDetails);
     }
   }
 }

@@ -991,10 +991,39 @@ function processBatch() {
         var settings = getSystemSettings();
         var adminEmails = settings.ADMIN_EMAILS || [];
 
-        for (var i = 0; i < adminEmails.length; i++) {
-          NotificationService.sendRealtimeErrorNotification(adminEmails[i], results);
+        // 統一フォーマットでエラー通知を作成
+        var errorDetails = {
+          processType: '文字起こし',
+          total: results.total,
+          success: results.success,
+          error: results.error,
+          errors: []
+        };
+
+        // results.detailsから詳細なエラー情報を構築
+        if (results.details && results.details.length > 0) {
+          for (var i = 0; i < results.details.length; i++) {
+            var detail = results.details[i];
+            if (detail.status === 'error') {
+              var errorInfo = {
+                fileName: detail.fileName,
+                message: detail.message,
+                errorCode: 'TRANSCRIPTION_ERROR',
+                timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+              };
+
+              // 詳細なエラーログを記録
+              NotificationService.logDetailedError(errorInfo, '文字起こし');
+
+              errorDetails.errors.push(errorInfo);
+            }
+          }
         }
-        Logger.log('リアルタイムエラー通知メールを送信しました');
+
+        for (var i = 0; i < adminEmails.length; i++) {
+          NotificationService.sendUnifiedErrorNotification(adminEmails[i], errorDetails);
+        }
+        Logger.log('文字起こしエラー通知メールを送信しました');
       } catch (notificationError) {
         Logger.log('通知メール送信エラー: ' + notificationError.toString());
       }
@@ -1121,7 +1150,7 @@ function updateTranscriptionStatusByRecordId(recordId, status, processStart, pro
           Logger.log('Recordingsシートの列数が不足しています（現在: ' + maxColumns + ', 必要: 14）。列を追加します。');
           sheet.insertColumnsAfter(maxColumns, 14 - maxColumns);
         }
-        
+
         if (processStart) sheet.getRange(rowIndex, 13).setValue(processStart);
         if (processEnd) sheet.getRange(rowIndex, 14).setValue(processEnd);
 
