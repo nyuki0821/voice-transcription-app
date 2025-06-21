@@ -13,8 +13,8 @@ var ZoomAPIManager = (function () {
    */
   function getAccessToken() {
     try {
-      // 必要なZoom認証情報を確実に取得するため、スクリプトプロパティも統合するloadSettingsを使用
-      var settings = loadSettings();
+      // 必要なZoom認証情報を取得
+      var settings = ConfigManager.getConfig();
 
       // 必要な認証情報が設定されているか確認
       if (!settings.ZOOM_CLIENT_ID || !settings.ZOOM_CLIENT_SECRET || !settings.ZOOM_ACCOUNT_ID) {
@@ -118,37 +118,11 @@ var ZoomAPIManager = (function () {
     }
   }
 
-  /**
-   * 設定を読み込む
-   * @return {Object} - 設定オブジェクト
-   */
-  function loadSettings() {
-    try {
-      // 環境設定から統合された設定を取得
-      var config = EnvironmentConfig.getConfig();
-
-      // Zoom API 認証情報を設定
-      var settings = {
-        ZOOM_CLIENT_ID: config.ZOOM_CLIENT_ID || '',
-        ZOOM_CLIENT_SECRET: config.ZOOM_CLIENT_SECRET || '',
-        ZOOM_ACCOUNT_ID: config.ZOOM_ACCOUNT_ID || ''
-      };
-
-      return settings;
-    } catch (error) {
-      return {
-        ZOOM_CLIENT_ID: '',
-        ZOOM_CLIENT_SECRET: '',
-        ZOOM_ACCOUNT_ID: ''
-      };
-    }
-  }
 
   // 公開メソッド
   return {
     getAccessToken: getAccessToken,
-    sendRequest: sendRequest,
-    loadSettings: loadSettings
+    sendRequest: sendRequest
   };
 })();
 

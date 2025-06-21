@@ -1,16 +1,14 @@
 /**
- * GPT-4o Transcribeを使用した文字起こし実験用スクリプト
- * - OpenAIのAPIを使用して音声ファイルから文字起こしを行う
- * - AssemblyAIで話者分離情報を取得し、両者をマージ
+ * Whisper Transcribeを使用した文字起こし実験用スクリプト
+ * - OpenAI Whisper APIを使用して音声ファイルから文字起こしと話者分離を行う
  */
 
-// スクリプトプロパティから設定値を取得
+// 設定値を取得（統一されたConfigManagerを使用）
 function getConfig() {
-  const scriptProperties = PropertiesService.getScriptProperties();
+  const config = ConfigManager.getConfig();
   return {
-    OPENAI_API_KEY: scriptProperties.getProperty('OPENAI_API_KEY'),
-    ASSEMBLYAI_API_KEY: scriptProperties.getProperty('ASSEMBLYAI_API_KEY'),
-    TEST_FOLDER_ID: scriptProperties.getProperty('TEST_FOLDER_ID')
+    OPENAI_API_KEY: config.OPENAI_API_KEY,
+    TEST_FOLDER_ID: config.TEST_FOLDER_ID || EnvironmentConfig.get('TEST_FOLDER_ID', '')
   };
 }
 
@@ -25,9 +23,6 @@ function processTestFiles() {
   // 設定値の検証
   if (!config.OPENAI_API_KEY) {
     throw new Error('OpenAI APIキーが設定されていません。スクリプトプロパティで設定してください。');
-  }
-  if (!config.ASSEMBLYAI_API_KEY) {
-    throw new Error('AssemblyAI APIキーが設定されていません。スクリプトプロパティで設定してください。');
   }
   if (!config.TEST_FOLDER_ID) {
     throw new Error('テストフォルダIDが設定されていません。スクリプトプロパティで設定してください。');
@@ -49,7 +44,7 @@ function processTestFiles() {
     return;
   }
 
-  // ファイルを処理（音声ファイルのみを抽出）
+  // 処理対象ファイルを配列に保存
   const fileList = [];
   while (files.hasNext()) {
     const file = files.next();
@@ -59,13 +54,7 @@ function processTestFiles() {
     // デバッグ情報
     Logger.log('フォルダ内ファイル: ' + fileName + ' (' + mimeType + ')');
 
-    // すでに処理済みのファイルもテスト用に処理する（一時的な措置）
-    // if (fileName.includes('processed_')) {
-    //   Logger.log('処理済みファイルをスキップ: ' + fileName);
-    //   continue;
-    // }
-
-    // 音声ファイルのみを処理対象とする（ファイル名の制限を緩和）
+    // 音声ファイルのみを処理対象とする
     if (isAudioFile(fileName, mimeType)) {
       fileList.push(file);
       Logger.log('処理対象ファイル検出: ' + fileName + ' (' + mimeType + ')');
@@ -85,69 +74,33 @@ function processTestFiles() {
   Logger.log('処理開始: ' + latestFile.getName());
 
   try {
-    // GPT-4o Transcribeで文字起こし
-    const openaiResult = transcribeWithGPT4o(latestFile, config.OPENAI_API_KEY);
-    Logger.log('GPT-4o Transcribe処理完了');
+    // Whisperベース処理
+    Logger.log('Whisperベース処理を開始します...');
+    
+    // Whisper APIで高精度文字起こし・話者分離
+    const whisperResult = TranscriptionService.transcribeWithWhisper(latestFile, config.OPENAI_API_KEY);
+    Logger.log('Whisper API 文字起こし・話者分離完了');
 
-    try {
-      // AssemblyAIで話者分離
-      const assemblyAIResult = transcribeWithAssemblyAI(latestFile, config.ASSEMBLYAI_API_KEY);
-      Logger.log('AssemblyAI処理完了');
+    // 結果の洗練
+    const enhancedResult = TranscriptionService.enhanceDialogueWithGPT4Mini({text: whisperResult.text}, whisperResult, config.OPENAI_API_KEY);
+    Logger.log('GPT-4.1 mini洗練処理完了');
 
-      // 結果をマージ
-      const mergedResult = mergeTranscriptions(openaiResult, assemblyAIResult);
-      Logger.log('マージ処理完了');
+    const finalResult = {
+      text: enhancedResult.text,
+      rawText: whisperResult.text,
+      utterances: whisperResult.utterances || [],
+      speakerInfo: whisperResult.speakerInfo || {},
+      speakerRoles: whisperResult.speakerRoles || {},
+      fileName: latestFile.getName(),
+      processingMode: 'whisper_based'
+    };
 
-      // 処理結果をログに出力
-      Logger.log('======= 処理結果 =======');
-      Logger.log(mergedResult.text);
+    // 処理結果をログに出力
+    Logger.log('======= 処理結果 (Whisperベース) =======');
+    Logger.log(finalResult.text);
 
-      // ファイル名の先頭に 'processed_' を付けて処理済みとしてマーク（テスト中は無効化）
-      // latestFile.setName('processed_' + latestFile.getName());
+    return finalResult;
 
-      return mergedResult;
-    } catch (assemblyError) {
-      // AssemblyAIでエラーが発生した場合、別の形式で試す
-      Logger.log('AssemblyAI処理中にエラーが発生しました: ' + assemblyError.toString());
-      Logger.log('別の形式でリクエストを試みます...');
-
-      // 別の形式でリクエストを試す
-      const altSuccess = tryAlternativeAssemblyAIRequest(latestFile, config.ASSEMBLYAI_API_KEY);
-
-      if (altSuccess) {
-        Logger.log('代替リクエスト方式が成功しました。デバッグ用のログを確認してください。');
-      } else {
-        Logger.log('代替リクエスト方式も失敗しました。さらにV3 APIを試します...');
-
-        // V3 APIも試す
-        const v3Success = tryAssemblyAIV3Request(latestFile, config.ASSEMBLYAI_API_KEY);
-
-        if (v3Success) {
-          Logger.log('V3 API方式が成功しました。デバッグ用のログを確認してください。');
-        } else {
-          Logger.log('すべての試行が失敗しました。GPT-4oの結果のみを返します。');
-        }
-      }
-
-      // GPT-4oの結果だけで簡易フォーマット
-      const simpleResult = {
-        text: formatSimpleText(openaiResult.text),
-        error: assemblyError.toString(),
-        original: {
-          openai: openaiResult,
-          assemblyAI: { error: assemblyError.toString() }
-        }
-      };
-
-      // 処理結果をログに出力
-      Logger.log('======= 処理結果 (GPT-4oのみ) =======');
-      Logger.log(simpleResult.text);
-
-      // ファイル名の先頭に 'processed_' を付けて処理済みとしてマーク（テスト中は無効化）
-      // latestFile.setName('processed_' + latestFile.getName());
-
-      return simpleResult;
-    }
   } catch (error) {
     Logger.log('処理中にエラーが発生しました: ' + error.toString());
     throw error;
@@ -158,1117 +111,128 @@ function processTestFiles() {
  * ファイルが音声ファイルかどうかを判定する
  * @param {string} fileName - ファイル名
  * @param {string} mimeType - MIMEタイプ
- * @return {boolean} - 音声ファイルならtrue
+ * @return {boolean} - 音声ファイルかどうか
  */
 function isAudioFile(fileName, mimeType) {
-  // デバッグ情報
-  Logger.log('ファイル判定: ' + fileName + ', MIMEタイプ: ' + mimeType);
-
-  // MIMEタイプによる判定
-  if (mimeType && (
-    mimeType.includes('audio/') ||
-    mimeType.includes('video/') ||  // 動画ファイルも音声として扱う
-    mimeType === 'application/octet-stream'  // バイナリファイルの場合は拡張子で判断
-  )) {
-
-    // 拡張子による判断（バイナリファイルの場合など）
-    if (mimeType === 'application/octet-stream') {
-      const ext = fileName.split('.').pop().toLowerCase();
-      const isAudio = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'mp4', 'mpeg', 'mpga', 'webm'].includes(ext);
-      Logger.log('バイナリファイル拡張子判定: ' + fileName + ' => ' + (isAudio ? '音声ファイル' : '非音声ファイル'));
-      return isAudio;
-    }
-
-    Logger.log('MIMEタイプに基づき音声ファイルと判定: ' + fileName);
+  // 拡張子で判定
+  const audioExtensions = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.wma'];
+  const extension = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
+  
+  if (audioExtensions.includes(extension)) {
     return true;
   }
-
-  // 拡張子による判断（バックアップ）
-  const ext = fileName.split('.').pop().toLowerCase();
-  const isAudio = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'mp4', 'mpeg', 'mpga', 'webm'].includes(ext);
-  Logger.log('拡張子による判断: ' + fileName + ' => ' + (isAudio ? '音声ファイル' : '非音声ファイル'));
-  return isAudio;
-}
-
-/**
- * GPT-4o Transcribeを使用して文字起こしを行う
- * @param {File} file - 音声ファイル
- * @param {string} apiKey - OpenAI APIキー
- * @return {Object} - 文字起こし結果
- */
-function transcribeWithGPT4o(file, apiKey) {
-  Logger.log('GPT-4o Transcribeでの文字起こし開始...');
-
-  try {
-    // ファイルのバイナリデータを取得
-    const fileBlob = file.getBlob();
-    const fileName = file.getName();
-
-    // OpenAI APIのエンドポイントURL
-    const url = 'https://api.openai.com/v1/audio/transcriptions';
-
-    // マルチパートフォームデータの作成
-    const boundary = Utilities.getUuid();
-    const contentType = 'multipart/form-data; boundary=' + boundary;
-
-    // ファイルパートの作成
-    let data = '';
-    data += '--' + boundary + '\r\n';
-    data += 'Content-Disposition: form-data; name="file"; filename="' + fileName + '"\r\n';
-    data += 'Content-Type: ' + fileBlob.getContentType() + '\r\n\r\n';
-
-    // バイナリデータの前後にテキストパートを追加
-    const fileBytes = fileBlob.getBytes();
-
-    // modelパートの追加
-    let modelPart = '\r\n--' + boundary + '\r\n';
-    modelPart += 'Content-Disposition: form-data; name="model"\r\n\r\n';
-    modelPart += 'gpt-4o-mini-transcribe' + '\r\n';
-
-    // language部分の追加（日本語を指定）
-    let langPart = '--' + boundary + '\r\n';
-    langPart += 'Content-Disposition: form-data; name="language"\r\n\r\n';
-    langPart += 'ja' + '\r\n';
-
-    // responseフォーマット部分の追加（JSONを取得）
-    let responsePart = '--' + boundary + '\r\n';
-    responsePart += 'Content-Disposition: form-data; name="response_format"\r\n\r\n';
-    responsePart += 'json' + '\r\n';
-
-    // timestampsパラメータ（タイムスタンプを有効化）
-    let timestampsPart = '--' + boundary + '\r\n';
-    timestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
-    timestampsPart += 'segment' + '\r\n';
-
-    // word-levelタイムスタンプも追加（両方指定して確実に取得）
-    let wordTimestampsPart = '--' + boundary + '\r\n';
-    wordTimestampsPart += 'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n';
-    wordTimestampsPart += 'word' + '\r\n';
-
-    // 最後の境界を追加
-    let endPart = '--' + boundary + '--\r\n';
-
-    // パート結合のためのバイト配列を作成
-    const head = Utilities.newBlob(data).getBytes();
-    const modelPartBytes = Utilities.newBlob(modelPart).getBytes();
-    const langPartBytes = Utilities.newBlob(langPart).getBytes();
-    const responsePartBytes = Utilities.newBlob(responsePart).getBytes();
-    const timestampsPartBytes = Utilities.newBlob(timestampsPart).getBytes();
-    const wordTimestampsPartBytes = Utilities.newBlob(wordTimestampsPart).getBytes();
-    const tail = Utilities.newBlob(endPart).getBytes();
-
-    // 全てのバイト配列を結合
-    const payload = [].concat(
-      head,
-      fileBytes,
-      modelPartBytes,
-      langPartBytes,
-      responsePartBytes,
-      timestampsPartBytes,
-      wordTimestampsPartBytes,
-      tail
-    );
-
-    // APIリクエストオプション
-    const options = {
-      method: 'post',
-      contentType: contentType,
-      headers: {
-        'Authorization': 'Bearer ' + apiKey
-      },
-      payload: payload,
-      muteHttpExceptions: true
-    };
-
-    // APIリクエスト送信
-    const response = UrlFetchApp.fetch(url, options);
-    const responseCode = response.getResponseCode();
-
-    // レスポンスのログ記録
-    Logger.log('GPT-4o APIレスポンスコード: ' + responseCode);
-
-    if (responseCode !== 200) {
-      Logger.log('エラーレスポンス: ' + response.getContentText());
-      throw new Error('GPT-4o API呼び出しエラー: ' + responseCode);
-    }
-
-    // レスポンスをJSONとしてパース
-    const responseJson = JSON.parse(response.getContentText());
-
-    // GPT-4o APIレスポンスの詳細をログに出力
-    Logger.log('GPT-4o APIレスポンス詳細: ' + JSON.stringify(responseJson).substring(0, 1000) + '...');
-
-    // シンプルに文字起こし結果を返す
-    return {
-      text: responseJson.text,
-      language: responseJson.language,
-      duration: responseJson.duration,
-      fileName: fileName
-    };
-  } catch (error) {
-    console.error(`GPT-4o-mini Transcribe処理中にエラー: ${error.toString()}`);
-    throw new Error(`GPT-4o-mini Transcribe処理中にエラー: ${error.toString()}`);
+  
+  // MIMEタイプで判定
+  if (mimeType && mimeType.startsWith('audio/')) {
+    return true;
   }
+  
+  return false;
 }
 
 /**
- * AssemblyAIを使用して話者分離情報を取得する
- * @param {File} file - 音声ファイル
- * @param {string} apiKey - AssemblyAI APIキー
- * @return {Object} - 文字起こし結果（話者分離情報付き）
+ * Whisperベースの文字起こし処理をテストする
  */
-function transcribeWithAssemblyAI(file, apiKey) {
-  Logger.log('AssemblyAIでの話者分離処理開始...');
-
+function testWhisperBasedProcessing() {
+  Logger.log('========== Whisperベース処理テスト開始 ==========');
+  
   try {
-    // ファイルのバイナリデータを取得
-    const fileBlob = file.getBlob();
-    const fileName = file.getName();
-
-    // Assembly AI APIのエンドポイントURL
-    const uploadUrl = 'https://api.assemblyai.com/v2/upload';
-    const transcriptUrl = 'https://api.assemblyai.com/v2/transcript';
-
-    // ファイルをAssembly AIにアップロード
-    const uploadOptions = {
-      method: 'post',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/octet-stream'
-      },
-      payload: fileBlob.getBytes(),
-      muteHttpExceptions: true
-    };
-
-    const uploadResponse = UrlFetchApp.fetch(uploadUrl, uploadOptions);
-    const uploadResponseCode = uploadResponse.getResponseCode();
-
-    if (uploadResponseCode !== 200) {
-      throw new Error('ファイルのアップロードに失敗しました。レスポンスコード: ' + uploadResponseCode);
-    }
-
-    const uploadResponseJson = JSON.parse(uploadResponse.getContentText());
-    const audioUrl = uploadResponseJson.upload_url;
-
-    // 言語に応じた最適なオプションを設定
-    let transcriptPayload = {
-      audio_url: audioUrl,
-      language_code: 'ja',
-      speaker_labels: true,
-      entity_detection: true  // エンティティ検出は常に有効化
-    };
-
-    // 言語に応じた機能の設定
-    if (transcriptPayload.language_code === 'ja') {
-      // 日本語では以下の機能が利用できないため除外
-      // - 感情分析 (sentiment_analysis)
-      // - 自動チャプター (auto_chapters)
-      // - 自動ハイライト (auto_highlights)
-
-      // SLAM-1モデルは日本語でも対応しているため設定
-      transcriptPayload.language_model = 'assemblyai/slam-1';
+    const result = processTestFiles();
+    
+    if (result) {
+      Logger.log('テスト成功: ' + result.fileName);
+      Logger.log('処理モード: ' + result.processingMode);
+      Logger.log('発話数: ' + (result.utterances ? result.utterances.length : 0));
+      Logger.log('話者情報: ' + JSON.stringify(result.speakerInfo));
+      Logger.log('話者役割: ' + JSON.stringify(result.speakerRoles));
     } else {
-      // 英語など他の言語では高度な機能を有効化
-      transcriptPayload.auto_chapters = true;
-      transcriptPayload.sentiment_analysis = true;
-      transcriptPayload.auto_highlights = true;
-      transcriptPayload.language_model = 'assemblyai/slam-1';
+      Logger.log('テスト失敗: 結果が取得できませんでした');
     }
-
-    // 文字起こしリクエストを送信
-    const transcriptOptions = {
-      method: 'post',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/json'
-      },
-      payload: JSON.stringify(transcriptPayload),
-      muteHttpExceptions: true
-    };
-
-    const transcriptResponse = UrlFetchApp.fetch(transcriptUrl, transcriptOptions);
-
-    // レスポンスコードの確認
-    const transcriptResponseCode = transcriptResponse.getResponseCode();
-    Logger.log('AssemblyAI 文字起こしリクエストレスポンスコード: ' + transcriptResponseCode);
-
-    if (transcriptResponseCode !== 200) {
-      Logger.log('AssemblyAI 文字起こしリクエストエラー: ' + transcriptResponse.getContentText());
-      throw new Error('AssemblyAI 文字起こしリクエストエラー: ' + transcriptResponseCode);
-    }
-
-    const transcriptResponseJson = JSON.parse(transcriptResponse.getContentText());
-
-    // レスポンス全体を確認用にログ出力
-    Logger.log('AssemblyAI 文字起こしリクエストレスポンス: ' + JSON.stringify(transcriptResponseJson));
-
-    const transcriptId = transcriptResponseJson.id;
-
-    // トランスクリプションIDの取得確認をログに出力
-    Logger.log('AssemblyAI トランスクリプションID取得: ' + transcriptId);
-
-    // IDが取得できない場合はエラー
-    if (!transcriptId) {
-      Logger.log('AssemblyAI エラー: トランスクリプションIDが取得できませんでした');
-      Logger.log('レスポンス内容: ' + JSON.stringify(transcriptResponseJson));
-      throw new Error('AssemblyAI トランスクリプションIDが取得できませんでした');
-    }
-
-    // 文字起こし結果のポーリング
-    const pollingUrl = transcriptUrl + '/' + transcriptId;
-    const pollingOptions = {
-      method: 'get',
-      headers: {
-        'Authorization': apiKey
-      },
-      muteHttpExceptions: true
-    };
-
-    // ポーリング開始前に少し待機（AssemblyAI側の処理開始を待つ）
-    Logger.log('AssemblyAI 処理開始待機中...');
-    Utilities.sleep(10000);  // 10秒待機
-
-    let pollingResponseJson;
-    let status = '';
-    const pollingInterval = 5000; // 5秒ごとにポーリングに変更（サーバー負荷軽減）
-    const maxPollingAttempts = 120; // 最大ポーリング回数（約10分に延長）
-    let pollingAttempts = 0;
-
-    while (status !== 'completed' && status !== 'error' && pollingAttempts < maxPollingAttempts) {
-      // ポーリング間隔を待機
-      Utilities.sleep(pollingInterval);
-
-      try {
-        const pollingResponse = UrlFetchApp.fetch(pollingUrl, pollingOptions);
-        const responseCode = pollingResponse.getResponseCode();
-
-        // レスポンスコードをログに出力
-        if (pollingAttempts % 5 === 0 || responseCode !== 200) {
-          Logger.log('AssemblyAI ポーリングレスポンスコード: ' + responseCode);
-        }
-
-        if (responseCode !== 200) {
-          const errorText = pollingResponse.getContentText();
-          Logger.log('AssemblyAI ポーリングエラー: ' + errorText);
-
-          // ID not foundエラーの場合、トランスクリプションIDが無効になっている可能性がある
-          if (errorText.includes('not found')) {
-            if (pollingAttempts > 5) {  // 何度か試行してもダメなら諦める
-              throw new Error('AssemblyAI トランスクリプションIDが無効です: ' + transcriptId);
-            }
-          } else if (pollingAttempts > 10) {  // その他のエラーが続く場合
-            throw new Error('AssemblyAI ポーリングエラー: レスポンスコード ' + responseCode);
-          }
-
-          // エラーの場合は少し長めに待機
-          Utilities.sleep(10000);
-          pollingAttempts++;
-          continue;
-        }
-
-        pollingResponseJson = JSON.parse(pollingResponse.getContentText());
-        status = pollingResponseJson.status;
-
-        // 処理に進展があった場合のみログに記録
-        if (status) {
-          Logger.log('AssemblyAI文字起こし進捗: ステータス=' + status + ', 試行回数=' + pollingAttempts + '/' + maxPollingAttempts);
-        } else {
-          if (pollingAttempts % 5 === 0) {
-            Logger.log('AssemblyAI文字起こし進捗: ステータス不明, 試行回数=' + pollingAttempts + '/' + maxPollingAttempts);
-            Logger.log('レスポンス内容: ' + pollingResponse.getContentText().substring(0, 200) + '...');
-          }
-        }
-      } catch (pollingError) {
-        Logger.log('AssemblyAI ポーリング中の例外: ' + pollingError.toString());
-        // エラーの場合は少し長めに待機してから再試行
-        Utilities.sleep(10000);
-      }
-
-      pollingAttempts++;
-    }
-
-    // 処理中または完了でない場合でもエラーをスロー
-    if (status !== 'completed') {
-      throw new Error('AssemblyAI文字起こし処理がタイムアウトまたはエラーが発生しました。ステータス: ' + status);
-    }
-
-    // 話者数をログに記録
-    const utteranceCount = pollingResponseJson.utterances ? pollingResponseJson.utterances.length : 0;
-    const speakerCount = getSpeakerCount(pollingResponseJson.utterances || []);
-    Logger.log('AssemblyAI処理完了: 話者数=' + speakerCount + ', 発話数=' + utteranceCount);
-
-    // エンティティ検出結果をログに記録
-    if (pollingResponseJson.entities) {
-      Logger.log('エンティティ検出結果: ' + JSON.stringify(pollingResponseJson.entities));
-    }
-
-    // 詳細なエンティティ情報があれば記録
-    let entitiesOriginal = [];
-    if (pollingResponseJson.results &&
-      pollingResponseJson.results.entities &&
-      Array.isArray(pollingResponseJson.results.entities)) {
-      entitiesOriginal = pollingResponseJson.results.entities;
-      Logger.log('詳細なエンティティ情報: ' + JSON.stringify(entitiesOriginal).substring(0, 500) + '...');
-    }
-
-    return {
-      text: pollingResponseJson.text || '',
-      utterances: pollingResponseJson.utterances || [],
-      entities: pollingResponseJson.entities || {},  // エンティティ情報を追加
-      entities_original: entitiesOriginal,  // 詳細なエンティティ情報を追加
-      fileName: fileName
-    };
-
+    
   } catch (error) {
-    // エラー情報を詳細にログ出力
-    Logger.log('AssemblyAI処理中に致命的エラー: ' + error.toString());
-    Logger.log('スタックトレース: ' + (error.stack || 'スタックトレースなし'));
-
-    // エラー情報を含むオブジェクトを返す
-    return {
-      error: error.toString(),
-      errorDetails: error.stack,
-      fileName: file.getName()
-    };
+    Logger.log('テスト中にエラー: ' + error.toString());
   }
+  
+  Logger.log('========== Whisperベース処理テスト終了 ==========');
 }
 
 /**
- * 話者の数を抽出する
- * @param {Array} utterances - 発話情報の配列
- * @return {number} - 話者の数
+ * 複数ファイルの一括処理テスト
  */
-function getSpeakerCount(utterances) {
-  const speakerSet = new Set();
-
-  for (let i = 0; i < utterances.length; i++) {
-    if (utterances[i].speaker) {
-      speakerSet.add(utterances[i].speaker);
-    }
+function processBatch() {
+  const config = getConfig();
+  
+  if (!config.OPENAI_API_KEY || !config.TEST_FOLDER_ID) {
+    Logger.log('エラー: 必要な設定が不足しています');
+    return;
   }
 
-  return speakerSet.size;
-}
-
-/**
- * 両サービスの文字起こし結果をマージする
- * @param {Object} openaiResult - GPT-4o Transcribeの結果
- * @param {Object} assemblyAIResult - AssemblyAIの結果（話者分離情報付き）
- * @return {Object} - マージした結果
- */
-function mergeTranscriptions(openaiResult, assemblyAIResult) {
-  Logger.log('文字起こし結果のマージ処理開始...');
-
-  try {
-    // AssemblyAIの結果が空またはエラーの場合はOpenAIの結果のみ返す
-    if (!assemblyAIResult || assemblyAIResult.error) {
-      Logger.log('AssemblyAIの結果がありません。GPT-4oの結果のみを返します。');
-      // 単純なフォーマットに変換して返す
-      return {
-        text: formatSimpleText(openaiResult.text),
-        original: {
-          openai: openaiResult,
-          assemblyAI: assemblyAIResult || { error: 'No result' }
-        }
-      };
+  const folder = DriveApp.getFolderById(config.TEST_FOLDER_ID);
+  const files = folder.getFiles();
+  
+  const audioFiles = [];
+  while (files.hasNext()) {
+    const file = files.next();
+    if (isAudioFile(file.getName(), file.getMimeType())) {
+      audioFiles.push(file);
     }
-
-    // AssemblyAIから話者情報を抽出
-    const utterances = assemblyAIResult.utterances || [];
-
-    // 話者分離情報がない場合は単純にOpenAIの結果を返す
-    if (!utterances || utterances.length === 0) {
-      Logger.log('AssemblyAIからの話者分離情報がありません。GPT-4oの結果をそのまま返します。');
-      return {
-        text: formatSimpleText(openaiResult.text),
-        original: {
-          openai: openaiResult,
-          assemblyAI: assemblyAIResult
-        }
-      };
-    }
-
-    // GPT-4.1 miniによる高度なマージを試みる（OpenAI APIキーを使用）
+  }
+  
+  Logger.log('====== 一括処理開始 ======');
+  Logger.log('処理対象ファイル数: ' + audioFiles.length);
+  
+  const results = [];
+  const startTime = new Date();
+  
+  for (let i = 0; i < audioFiles.length; i++) {
+    const file = audioFiles[i];
+    Logger.log(`\n[${i + 1}/${audioFiles.length}] 処理中: ${file.getName()}`);
+    
     try {
-      Logger.log('マージ処理メソッド: GPT-4.1 miniによる高度なマージを実行します...');
-      // getConfig()からAPIキーを再取得
-      const config = getConfig();
-      const result = enhanceDialogueWithGPT4Mini(openaiResult, assemblyAIResult, config.OPENAI_API_KEY);
-      Logger.log('GPT-4.1 miniによる高度なマージが正常に完了しました');
-      return result;
-    } catch (miniError) {
-      Logger.log('GPT-4.1 miniによるマージでエラー: ' + miniError.toString());
-      Logger.log('マージ処理メソッド: 通常の文章ベースマージにフォールバックします。');
-      return textBasedMerge(openaiResult, assemblyAIResult);
-    }
-  } catch (error) {
-    Logger.log('マージ処理中にエラー: ' + error.toString());
-    // エラー時はGPT-4oの結果を簡易フォーマットして返す
-    return {
-      text: formatSimpleText(openaiResult.text),
-      error: error.toString(),
-      original: {
-        openai: openaiResult,
-        assemblyAI: assemblyAIResult || { error: 'Processing failed' }
-      }
-    };
-  }
-}
-
-/**
- * 単純なテキストを段落ごとにフォーマットする
- * @param {string} text - 元のテキスト
- * @return {string} - フォーマット済みテキスト
- */
-function formatSimpleText(text) {
-  // 空の場合は空文字を返す
-  if (!text) return '';
-
-  // 文章ごとに分割して整形
-  const sentences = text.split(/(?<=[。．！？])\s*/);
-  const paragraphs = [];
-  let currentParagraph = '';
-
-  // 3-4文ごとに段落を分ける
-  for (let i = 0; i < sentences.length; i++) {
-    currentParagraph += sentences[i];
-
-    // 3-4文ごと、または最後の文の場合は段落を確定
-    if ((i + 1) % 4 === 0 || i === sentences.length - 1) {
-      paragraphs.push(currentParagraph.trim());
-      currentParagraph = '';
-    }
-  }
-
-  // 段落をつなげて返す
-  return paragraphs.join('\n\n');
-}
-
-/**
- * 話者ラベルをフォーマットする
- * @param {string} speaker - 話者ID
- * @param {Object} speakerRoles - 話者の役割マップ
- * @return {string} - フォーマットされた話者ラベル
- */
-function formatSpeakerLabel(speaker, speakerRoles) {
-  if (!speaker) return '【不明】';
-
-  // 役割情報がある場合
-  if (speakerRoles && speakerRoles[speaker]) {
-    return '【' + speakerRoles[speaker] + '】';
-  }
-
-  // デフォルトのフォーマット
-  return '【話者' + speaker + '】';
-}
-
-/**
- * 話者の役割を特定する
- * @param {Array} utterances - 発話情報の配列
- * @return {Object} - 話者IDと役割のマッピング
- */
-function identifySpeakerRoles(utterances) {
-  // 話者ごとの発話回数と発話の長さを集計
-  const speakerStats = {};
-  const speakerUtterances = {};
-
-  for (let i = 0; i < utterances.length; i++) {
-    const u = utterances[i];
-    const speaker = u.speaker;
-
-    if (!speaker) continue;
-
-    if (!speakerStats[speaker]) {
-      speakerStats[speaker] = {
-        count: 0,
-        totalLength: 0,
-        totalDuration: 0
+      const whisperResult = TranscriptionService.transcribeWithWhisper(file, config.OPENAI_API_KEY);
+      const enhancedResult = TranscriptionService.enhanceDialogueWithGPT4Mini({text: whisperResult.text}, whisperResult, config.OPENAI_API_KEY);
+      
+      const result = {
+        fileName: file.getName(),
+        text: enhancedResult.text,
+        utteranceCount: whisperResult.utterances ? whisperResult.utterances.length : 0,
+        speakerInfo: whisperResult.speakerInfo,
+        speakerRoles: whisperResult.speakerRoles,
+        entities: whisperResult.entities
       };
-      speakerUtterances[speaker] = [];
+      
+      results.push(result);
+      Logger.log(`完了: ${result.utteranceCount}発話, 文字数: ${result.text.length}`);
+      
+    } catch (error) {
+      Logger.log(`エラー: ${file.getName()} - ${error.toString()}`);
+      results.push({
+        fileName: file.getName(),
+        error: error.toString()
+      });
     }
-
-    speakerStats[speaker].count++;
-    speakerStats[speaker].totalLength += u.text ? u.text.length : 0;
-    speakerStats[speaker].totalDuration += (u.end - u.start);
-    speakerUtterances[speaker].push(u.text || '');
   }
-
-  // 役割を特定するためのヒューリスティック
-  // 1. 話す比率が高い（長い）ほうが説明する側（営業担当者など）
-  // 2. 質問が多い方がお客様の可能性が高い
-
-  // 話者のリストを取得
-  const speakers = Object.keys(speakerStats);
-
-  // 話者が1人以下の場合は役割を特定しない
-  if (speakers.length <= 1) {
-    const result = {};
-    if (speakers.length === 1) {
-      result[speakers[0]] = '話者A';
-    }
-    return result;
-  }
-
-  // 話者が2人以上の場合、話す時間の長い方を「担当者」、短い方を「お客様」とする
-  let staff = null;
-  let customer = null;
-
-  // 話す時間で比較
-  if (speakers.length === 2) {
-    if (speakerStats[speakers[0]].totalDuration > speakerStats[speakers[1]].totalDuration) {
-      staff = speakers[0];
-      customer = speakers[1];
+  
+  const endTime = new Date();
+  const totalTime = (endTime - startTime) / 1000;
+  
+  Logger.log('\n====== 一括処理結果 ======');
+  Logger.log(`総処理時間: ${totalTime}秒`);
+  Logger.log(`成功: ${results.filter(r => !r.error).length}件`);
+  Logger.log(`失敗: ${results.filter(r => r.error).length}件`);
+  
+  // 詳細結果
+  results.forEach((result, index) => {
+    Logger.log(`\n[${index + 1}] ${result.fileName}`);
+    if (result.error) {
+      Logger.log(`  エラー: ${result.error}`);
     } else {
-      staff = speakers[1];
-      customer = speakers[0];
+      Logger.log(`  文字数: ${result.text.length}, 発話数: ${result.utteranceCount}`);
+      if (result.speakerInfo && Object.keys(result.speakerInfo).length > 0) {
+        Logger.log(`  話者情報: ${JSON.stringify(result.speakerInfo)}`);
+      }
     }
-
-    return {
-      [staff]: '担当者',
-      [customer]: 'お客様'
-    };
-  }
-
-  // 3人以上の場合はA, B, C...と表記
-  const result = {};
-  for (let i = 0; i < speakers.length; i++) {
-    result[speakers[i]] = '話者' + String.fromCharCode(65 + i); // A, B, C...
-  }
-
-  return result;
+  });
+  
+  return results;
 }
-
-/**
- * セグメント情報がない場合に、テキストベースでマージする
- * @param {Object} openaiResult - GPT-4o Transcribeの結果
- * @param {Object} assemblyAIResult - AssemblyAIの結果
- * @return {Object} - マージした結果
- */
-function textBasedMerge(openaiResult, assemblyAIResult) {
-  // GPT-4.1 miniに渡すための下準備としての処理かどうかを判定
-  const isForGpt41Mini = (new Error().stack || '').includes('enhanceDialogueWithGPT4Mini');
-
-  if (isForGpt41Mini) {
-    Logger.log('GPT-4.1 mini用の下準備として初期マージデータを作成中...');
-  } else {
-    Logger.log('テキストベースのマージ処理を実行します...');
-  }
-
-  try {
-    // AssemblyAIの結果が空またはエラーの場合はOpenAIの結果のみ返す
-    if (!assemblyAIResult || assemblyAIResult.error) {
-      return {
-        text: formatSimpleText(openaiResult.text),
-        original: {
-          openai: openaiResult,
-          assemblyAI: assemblyAIResult || { error: 'No result' }
-        }
-      };
-    }
-
-    // AssemblyAIから話者情報を抽出
-    const utterances = assemblyAIResult.utterances || [];
-
-    // 話者分離情報がない場合は単純にOpenAIの結果を返す
-    if (!utterances || utterances.length === 0) {
-      return {
-        text: formatSimpleText(openaiResult.text),
-        original: {
-          openai: openaiResult,
-          assemblyAI: assemblyAIResult
-        }
-      };
-    }
-
-    // 話者IDを役割に変換
-    const speakerRoles = identifySpeakerRoles(utterances);
-
-    // OpenAIのテキストを文ごとに分割
-    const sentences = openaiResult.text.split(/(?<=[。．！？])\s*/);
-
-    // 文章を話者のタイミングに基づいて分割
-    const speakerSegments = splitTextBySpeakerTiming(sentences, utterances);
-
-    // 話者情報を付与したテキストを生成
-    let mergedText = '';
-
-    for (let i = 0; i < speakerSegments.length; i++) {
-      const segment = speakerSegments[i];
-      const speakerLabel = formatSpeakerLabel(segment.speaker, speakerRoles);
-      mergedText += speakerLabel + ' ' + segment.text + '\n\n';
-    }
-
-    // エンティティ情報があれば追加（改善版）
-    if (assemblyAIResult.entities && Object.keys(assemblyAIResult.entities).length > 0) {
-      mergedText += '\n【検出されたエンティティ】\n';
-
-      // エンティティの種類と日本語名のマッピング
-      const entityTypeMap = {
-        'person_name': '人物名',
-        'location': '場所',
-        'organization': '組織',
-        'date': '日付',
-        'time': '時間',
-        'money': '金額',
-        'percent': 'パーセント',
-        'event': 'イベント',
-        'product': '製品',
-        'phone_number': '電話番号',
-        'email_address': 'メールアドレス',
-        'url': 'URL',
-        'age': '年齢',
-        'occupation': '職業',
-        'date_interval': '期間'
-      };
-
-      // タイプごとのエンティティカウントを表示
-      for (const [type, count] of Object.entries(assemblyAIResult.entities)) {
-        const typeJa = entityTypeMap[type] || type;
-        mergedText += `${typeJa}: ${count}件\n`;
-      }
-
-      // テキスト内の具体的なエンティティを抽出して表示
-      if (Array.isArray(assemblyAIResult.entities_original)) {
-        const entityDetails = {};
-
-        // エンティティをタイプごとにグループ化
-        assemblyAIResult.entities_original.forEach(entity => {
-          const type = entity.entity_type;
-          const typeJa = entityTypeMap[type] || type;
-
-          if (!entityDetails[typeJa]) {
-            entityDetails[typeJa] = new Set();
-          }
-          entityDetails[typeJa].add(entity.text);
-        });
-
-        // グループ化したエンティティを表示
-        mergedText += '\n【検出されたエンティティの詳細】\n';
-        for (const [typeJa, values] of Object.entries(entityDetails)) {
-          mergedText += `${typeJa}: ${Array.from(values).join('、')}\n`;
-        }
-      }
-    }
-
-    return {
-      text: mergedText,
-      original: {
-        openai: openaiResult,
-        assemblyAI: assemblyAIResult
-      }
-    };
-
-  } catch (error) {
-    Logger.log('テキストベースのマージ処理中にエラー: ' + error.toString());
-    // エラー時はGPT-4oの結果を簡易フォーマットして返す
-    return {
-      text: formatSimpleText(openaiResult.text),
-      error: error.toString(),
-      original: {
-        openai: openaiResult,
-        assemblyAI: assemblyAIResult
-      }
-    };
-  }
-}
-
-/**
- * 文章を話者のタイミングに基づいて分割する
- * @param {Array} sentences - 文章の配列
- * @param {Array} utterances - 発話情報の配列
- * @return {Array} - 話者ごとの文章セグメント
- */
-function splitTextBySpeakerTiming(sentences, utterances) {
-  const result = [];
-
-  // 文章数が少ない場合
-  if (sentences.length <= 1) {
-    // 最初の話者を取得
-    const firstSpeaker = utterances.length > 0 ? utterances[0].speaker : null;
-
-    result.push({
-      speaker: firstSpeaker,
-      text: sentences.join(' ')
-    });
-
-    return result;
-  }
-
-  // 発話数が文章数より多い場合、単純に発話ごとに分割
-  if (utterances.length >= sentences.length) {
-    let currentSpeaker = null;
-    let currentText = '';
-
-    for (let i = 0; i < utterances.length; i++) {
-      const u = utterances[i];
-
-      // 話者が変わった場合
-      if (u.speaker !== currentSpeaker && currentText) {
-        result.push({
-          speaker: currentSpeaker,
-          text: currentText.trim()
-        });
-        currentText = '';
-      }
-
-      currentSpeaker = u.speaker;
-      currentText += (u.text || '') + ' ';
-    }
-
-    // 最後の話者のテキストを追加
-    if (currentText) {
-      result.push({
-        speaker: currentSpeaker,
-        text: currentText.trim()
-      });
-    }
-
-    return result;
-  }
-
-  // 文章数が発話数より多い場合、文章を話者に割り当てる
-  const totalUtteranceTime = utterances[utterances.length - 1].end - utterances[0].start;
-  const avgSentenceTime = totalUtteranceTime / sentences.length;
-
-  let currentSpeaker = null;
-  let currentText = '';
-  let sentenceIndex = 0;
-
-  for (let i = 0; i < utterances.length; i++) {
-    const u = utterances[i];
-    const utteranceDuration = u.end - u.start;
-    const sentencesInUtterance = Math.round(utteranceDuration / avgSentenceTime);
-
-    // 話者が変わった場合に結果を追加
-    if (u.speaker !== currentSpeaker && currentText) {
-      result.push({
-        speaker: currentSpeaker,
-        text: currentText.trim()
-      });
-      currentText = '';
-    }
-
-    currentSpeaker = u.speaker;
-
-    // この発話に含まれる文章を追加
-    for (let j = 0; j < sentencesInUtterance && sentenceIndex < sentences.length; j++) {
-      currentText += sentences[sentenceIndex] + ' ';
-      sentenceIndex++;
-    }
-  }
-
-  // 残りの文章を最後の話者に割り当て
-  while (sentenceIndex < sentences.length) {
-    currentText += sentences[sentenceIndex] + ' ';
-    sentenceIndex++;
-  }
-
-  // 最後の話者のテキストを追加
-  if (currentText) {
-    result.push({
-      speaker: currentSpeaker,
-      text: currentText.trim()
-    });
-  }
-
-  return result;
-}
-
-// AssemblyAIへの別の形式でのリクエスト送信を試す関数（バックアップ）
-function tryAlternativeAssemblyAIRequest(file, apiKey) {
-  Logger.log('別の形式でのAssemblyAI接続を試行...');
-
-  try {
-    // ファイルのバイナリデータを取得
-    const fileBlob = file.getBlob();
-    const fileName = file.getName();
-
-    // Assembly AI APIのエンドポイントURL
-    const uploadUrl = 'https://api.assemblyai.com/v2/upload';
-    const transcriptUrl = 'https://api.assemblyai.com/v2/transcript';
-
-    // ファイルをAssembly AIにアップロード
-    const uploadOptions = {
-      method: 'post',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/octet-stream'
-      },
-      payload: fileBlob.getBytes(),
-      muteHttpExceptions: true
-    };
-
-    const uploadResponse = UrlFetchApp.fetch(uploadUrl, uploadOptions);
-    const uploadResponseCode = uploadResponse.getResponseCode();
-
-    if (uploadResponseCode !== 200) {
-      throw new Error('ファイルのアップロードに失敗しました。レスポンスコード: ' + uploadResponseCode);
-    }
-
-    const uploadResponseJson = JSON.parse(uploadResponse.getContentText());
-    const audioUrl = uploadResponseJson.upload_url;
-
-    // 別の形式で試す（最もシンプルな形式）
-    const transcriptOptions = {
-      method: 'post',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/json'
-      },
-      payload: JSON.stringify({
-        audio_url: audioUrl,
-        speaker_labels: true
-      }),
-      muteHttpExceptions: true
-    };
-
-    const transcriptResponse = UrlFetchApp.fetch(transcriptUrl, transcriptOptions);
-    const transcriptResponseCode = transcriptResponse.getResponseCode();
-    Logger.log('代替リクエスト方式のレスポンスコード: ' + transcriptResponseCode);
-
-    if (transcriptResponseCode !== 200) {
-      Logger.log('代替リクエスト方式のエラー: ' + transcriptResponse.getContentText());
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    Logger.log('代替リクエスト方式の例外: ' + error.toString());
-    return false;
-  }
-}
-
-// もう一つの代替形式（v3エンドポイントを試す）
-function tryAssemblyAIV3Request(file, apiKey) {
-  Logger.log('AssemblyAI v3エンドポイントを試行...');
-
-  try {
-    // ファイルのバイナリデータを取得
-    const fileBlob = file.getBlob();
-    const fileName = file.getName();
-
-    // Assembly AI v3 APIのエンドポイントURL（もし存在すれば）
-    const uploadUrl = 'https://api.assemblyai.com/v3/upload';
-    const transcriptUrl = 'https://api.assemblyai.com/v3/transcript';
-
-    // ファイルをAssembly AIにアップロード
-    const uploadOptions = {
-      method: 'post',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/octet-stream'
-      },
-      payload: fileBlob.getBytes(),
-      muteHttpExceptions: true
-    };
-
-    const uploadResponse = UrlFetchApp.fetch(uploadUrl, uploadOptions);
-    const uploadResponseCode = uploadResponse.getResponseCode();
-
-    if (uploadResponseCode !== 200) {
-      Logger.log('V3 APIのファイルアップロードエラー: ' + uploadResponseCode);
-      return false;
-    }
-
-    const uploadResponseJson = JSON.parse(uploadResponse.getContentText());
-    const audioUrl = uploadResponseJson.upload_url;
-
-    // V3形式で試す
-    const transcriptOptions = {
-      method: 'post',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/json'
-      },
-      payload: JSON.stringify({
-        audio_url: audioUrl,
-        diarization: true,
-        speakers_expected: 2
-      }),
-      muteHttpExceptions: true
-    };
-
-    const transcriptResponse = UrlFetchApp.fetch(transcriptUrl, transcriptOptions);
-    const transcriptResponseCode = transcriptResponse.getResponseCode();
-    Logger.log('V3 API試行のレスポンスコード: ' + transcriptResponseCode);
-
-    if (transcriptResponseCode !== 200) {
-      Logger.log('V3 API試行のエラー: ' + transcriptResponse.getContentText());
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    Logger.log('V3 API試行の例外: ' + error.toString());
-    return false;
-  }
-}
-
-/**
- * OpenAI GPT-4.1 miniを使用して話者分離マージを洗練する
- * @param {Object} openaiTranscriptResult - GPT-4o Transcribeの結果
- * @param {Object} assemblyAIResult - AssemblyAIの結果
- * @param {string} apiKey - OpenAI APIキー
- * @return {Object} - マージした結果
- */
-function enhanceDialogueWithGPT4Mini(openaiTranscriptResult, assemblyAIResult, apiKey) {
-  Logger.log('GPT-4.1 miniによる会話洗練処理を開始...');
-
-  try {
-    // AssemblyAIの話者情報を抽出
-    const utterances = assemblyAIResult.utterances || [];
-
-    // 話者分離情報がない場合はシンプルなマージ結果を返す
-    if (!utterances || utterances.length === 0) {
-      return textBasedMerge(openaiTranscriptResult, assemblyAIResult);
-    }
-
-    // 現在のマージ結果を取得（下準備として実行）
-    Logger.log('初期マージデータを準備中（下準備）...');
-    const currentMergeResult = textBasedMerge(openaiTranscriptResult, assemblyAIResult);
-    Logger.log('初期マージデータの準備完了、GPT-4.1 miniによる高度な処理を開始...');
-
-    // 話者ごとのセリフを抽出
-    const speakerRoles = identifySpeakerRoles(utterances);
-    const speakerLabels = {};
-
-    Object.keys(speakerRoles).forEach(speakerId => {
-      speakerLabels[speakerId] = formatSpeakerLabel(speakerId, speakerRoles);
-    });
-
-    // エンティティ情報をテキスト形式に変換
-    let entitiesText = '';
-    if (assemblyAIResult.entities && Object.keys(assemblyAIResult.entities).length > 0) {
-      entitiesText = 'エンティティ検出情報:\n';
-
-      // エンティティの種類と日本語名のマッピング
-      const entityTypeMap = {
-        'person_name': '人物名',
-        'location': '場所',
-        'organization': '組織',
-        'date': '日付',
-        'time': '時間',
-        'money': '金額',
-        'percent': 'パーセント',
-        'event': 'イベント',
-        'product': '製品',
-        'phone_number': '電話番号',
-        'email_address': 'メールアドレス',
-        'url': 'URL',
-        'age': '年齢',
-        'occupation': '職業',
-        'date_interval': '期間'
-      };
-
-      // タイプごとのエンティティカウントを表示
-      for (const [type, count] of Object.entries(assemblyAIResult.entities)) {
-        const typeJa = entityTypeMap[type] || type;
-        entitiesText += `${typeJa}: ${count}件\n`;
-      }
-
-      // 詳細なエンティティ情報があれば追加
-      if (Array.isArray(assemblyAIResult.entities_original)) {
-        const entityDetails = {};
-
-        // エンティティをタイプごとにグループ化
-        assemblyAIResult.entities_original.forEach(entity => {
-          const type = entity.entity_type;
-          const typeJa = entityTypeMap[type] || type;
-
-          if (!entityDetails[typeJa]) {
-            entityDetails[typeJa] = new Set();
-          }
-          entityDetails[typeJa].add(entity.text);
-        });
-
-        // グループ化したエンティティを表示
-        entitiesText += '\n詳細なエンティティ情報:\n';
-        for (const [typeJa, values] of Object.entries(entityDetails)) {
-          entitiesText += `${typeJa}: ${Array.from(values).join('、')}\n`;
-        }
-      }
-    }
-
-    // GPT-4.1 miniに送るプロンプトを作成
-    const prompt = {
-      model: "gpt-4.1-mini",
-      messages: [
-        {
-          role: "system",
-          content: `あなたはインサイドセールスの電話会話を整理する専門家です。
-以下の会話をより読みやすく整理してください：
-
-1. 会話はインサイドセールスの電話交換です。自動音声案内が最初にある場合もあります。
-2. 会話の内容や事実を絶対に変更しないでください。
-3. 話者の区別を明確にしてください。AssemblyAIによる話者分離情報とGPT-4o Transcribeの文字起こしを組み合わせて最適化します。
-4. 各話者を【自動音声】【営業担当】【お客様】などの役割ラベルで示してください。
-5. 出力形式は各発話の前に話者ラベルを付け、発話ごとに改行を入れてください。
-6. 自然な会話の流れになるよう整理してください。
-7. エンティティ（人物、組織、日付など）の情報を活用して話者の区別や役割の特定に役立ててください。
-8. 検出された具体的なエンティティ（人名、組織名など）を活用して、会話の内容をより正確に理解してください。`
-        },
-        {
-          role: "user",
-          content: `元の文字起こし文章:
-${openaiTranscriptResult.text}
-
-現在の話者分離結果:
-${currentMergeResult.text}
-
-AssemblyAIが検出した話者情報:
-${JSON.stringify(speakerLabels)}
-
-${entitiesText}
-
-これらの情報を組み合わせて、会話をより自然で読みやすく整理してください。話者の役割を適切に判断して【自動音声】【営業担当】【お客様】などのラベルを付けてください。内容を変更せず、話者の切り替わりだけを最適化してください。
-
-検出されたエンティティ情報（特に人物名、組織名、役職など）を活用して、話者の正確な所属や役割を特定してください。例えば、人物名と組織名が関連付けられている場合は、【〇〇会社 △△様】のように詳細なラベルを使用してください。
-
-最後に検出されたエンティティ情報を要約して含めてください。主な人物、組織、日付、時間などを簡潔にまとめてください。`
-        }
-      ],
-      temperature: 0.2,
-      max_tokens: 3000
-    };
-
-    // OpenAI APIを呼び出し
-    const options = {
-      method: 'post',
-      headers: {
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Type': 'application/json'
-      },
-      payload: JSON.stringify(prompt),
-      muteHttpExceptions: true
-    };
-
-    const response = UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', options);
-    const responseCode = response.getResponseCode();
-
-    if (responseCode !== 200) {
-      Logger.log('GPT-4.1 mini API呼び出しエラー: ' + responseCode);
-      Logger.log(response.getContentText());
-      // エラー時は通常のマージ結果を返す
-      return currentMergeResult;
-    }
-
-    const responseJson = JSON.parse(response.getContentText());
-    const enhancedText = responseJson.choices[0].message.content;
-
-    Logger.log('GPT-4.1 miniによる会話洗練処理が完了しました（最終結果として採用）');
-
-    return {
-      text: enhancedText,
-      original: {
-        openai: openaiTranscriptResult,
-        assemblyAI: assemblyAIResult,
-        basicMerge: currentMergeResult
-      }
-    };
-
-  } catch (error) {
-    Logger.log('GPT-4.1 miniによる会話洗練処理中にエラー: ' + error.toString());
-    // エラー時は通常のマージ結果を返す
-    return textBasedMerge(openaiTranscriptResult, assemblyAIResult);
-  }
-} 

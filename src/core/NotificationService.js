@@ -3,6 +3,47 @@
  */
 var NotificationService = (function () {
   /**
+   * エラーの重要度を判断する
+   * @param {string} errorMessage - エラーメッセージ
+   * @return {boolean} - 重要なエラーの場合はtrue、それ以外はfalse
+   */
+  function isHighPriorityError(errorMessage) {
+    if (!errorMessage) return true; // エラーメッセージがない場合は重要とみなす
+
+    const errorStr = errorMessage.toString().toLowerCase();
+
+    // クリティカルなエラーパターン
+    const criticalPatterns = [
+      'api key', 'authentication', 'quota exceeded', 'rate limit',
+      'storage', 'permission denied', 'access denied',
+      'critical', 'fatal', 'unauthorized', '401', '403',
+      'insufficient', 'not found', 'timeout exceeded',
+      'database', 'connection', 'network error'
+    ];
+
+    // 一時的なエラーパターン（通知不要）
+    const temporaryPatterns = [
+      'syntax error', 'json', 'unexpected end', 'parse error',
+      'timeout', 'temporary', 'retry', 'network',
+      'too many requests', '429', 'server error', '5',
+      'information extraction', '情報抽出'
+    ];
+
+    // クリティカルパターンにマッチする場合は高優先度
+    for (const pattern of criticalPatterns) {
+      if (errorStr.includes(pattern)) return true;
+    }
+
+    // 一時的なエラーパターンにマッチする場合は低優先度
+    for (const pattern of temporaryPatterns) {
+      if (errorStr.includes(pattern)) return false;
+    }
+
+    // デフォルトは通知する（安全側に倒す）
+    return true;
+  }
+
+  /**
    * 日次処理結果サマリーをメールで送信する
    * @param {string} email - 送信先メールアドレス
    * @param {Object} results - 処理結果オブジェクト
@@ -61,28 +102,48 @@ var NotificationService = (function () {
     }
 
     try {
+      // 重要なエラーがあるか確認
+      let hasHighPriorityError = false;
+      let highPriorityErrorDetails = [];
+
+      if (results.details && results.details.length > 0) {
+        for (var i = 0; i < results.details.length; i++) {
+          var detail = results.details[i];
+          if (detail.status === 'error') {
+            // エラーの重要度を判断
+            if (isHighPriorityError(detail.message)) {
+              hasHighPriorityError = true;
+              highPriorityErrorDetails.push(detail);
+            }
+          }
+        }
+      }
+
+      // 重要なエラーがない場合は通知しない
+      if (!hasHighPriorityError) {
+        Logger.log('重要度の低いエラーのみのため、通知をスキップします');
+        return;
+      }
+
       var subject = '【緊急】顧客会話自動文字起こしシステム - 処理エラー発生';
 
-      var body = 'リアルタイム処理中にエラーが発生しました\n\n';
+      var body = 'リアルタイム処理中に重要なエラーが発生しました\n\n';
 
       // エラーサマリー
       body += 'エラーサマリー:\n';
       body += '処理対象ファイル数: ' + results.total + '件\n';
       body += '成功: ' + results.success + '件\n';
       body += 'エラー: ' + results.error + '件\n';
+      body += '重要なエラー: ' + highPriorityErrorDetails.length + '件\n';
       body += '発生時刻: ' + new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) + '\n\n';
 
       // エラー詳細
-      if (results.details && results.details.length > 0) {
-        body += 'エラー詳細:\n';
-        var errorCount = 0;
-        for (var i = 0; i < results.details.length; i++) {
-          var detail = results.details[i];
-          if (detail.status === 'error') {
-            errorCount++;
-            body += errorCount + '. ファイル: ' + detail.fileName + '\n';
-            body += '   エラー内容: ' + detail.message + '\n\n';
-          }
+      if (highPriorityErrorDetails.length > 0) {
+        body += '重要なエラー詳細:\n';
+        for (var i = 0; i < highPriorityErrorDetails.length; i++) {
+          var detail = highPriorityErrorDetails[i];
+          body += (i + 1) + '. ファイル: ' + detail.fileName + '\n';
+          body += '   エラー内容: ' + detail.message + '\n\n';
         }
       }
 
@@ -111,35 +172,55 @@ var NotificationService = (function () {
     }
 
     try {
-      var subject = '顧客会話自動文字起こしシステム - 見逃しエラー検知・復旧完了';
+      // 重要なエラーがあるか確認
+      let hasHighPriorityError = false;
+      let highPriorityErrorDetails = [];
 
-      var body = '見逃しエラー検知・復旧処理の結果をお知らせします\n\n';
+      if (results.details && results.details.length > 0) {
+        for (var i = 0; i < results.details.length; i++) {
+          var detail = results.details[i];
+          if (detail.status === 'recovered') {
+            // エラーの重要度を判断
+            if (isHighPriorityError(detail.message)) {
+              hasHighPriorityError = true;
+              highPriorityErrorDetails.push(detail);
+            }
+          }
+        }
+      }
+
+      // 重要なエラーがない場合は通知しない
+      if (!hasHighPriorityError) {
+        Logger.log('重要度の低い見逃しエラーのみのため、通知をスキップします');
+        return;
+      }
+
+      var subject = '顧客会話自動文字起こしシステム - 重要な見逃しエラー検知・復旧完了';
+
+      var body = '重要な見逃しエラーの検知・復旧処理の結果をお知らせします\n\n';
 
       // 検知サマリー
       body += '検知サマリー:\n';
       body += '検査対象レコード数: ' + results.total + '件\n';
       body += '見逃しエラー検知: ' + results.recovered + '件\n';
+      body += '重要な見逃しエラー: ' + highPriorityErrorDetails.length + '件\n';
       body += '復旧失敗: ' + results.failed + '件\n';
       body += '検知時刻: ' + new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) + '\n\n';
 
       // 詳細情報
-      if (results.details && results.details.length > 0) {
-        body += '検知された問題の詳細:\n';
-        var recoveredCount = 0;
-        for (var i = 0; i < results.details.length; i++) {
-          var detail = results.details[i];
-          if (detail.status === 'recovered') {
-            recoveredCount++;
-            body += recoveredCount + '. Record ID: ' + detail.recordId + '\n';
-            if (detail.issue) {
-              body += '   問題の種類: ' + detail.issue + '\n';
-            }
-            body += '   復旧状況: ' + detail.message + '\n';
-            if (detail.fileFound !== undefined) {
-              body += '   ファイル移動: ' + (detail.fileFound ? '成功' : 'ファイル未発見') + '\n';
-            }
-            body += '\n';
+      if (highPriorityErrorDetails.length > 0) {
+        body += '検知された重要な問題の詳細:\n';
+        for (var i = 0; i < highPriorityErrorDetails.length; i++) {
+          var detail = highPriorityErrorDetails[i];
+          body += (i + 1) + '. Record ID: ' + detail.recordId + '\n';
+          if (detail.issue) {
+            body += '   問題の種類: ' + detail.issue + '\n';
           }
+          body += '   復旧状況: ' + detail.message + '\n';
+          if (detail.fileFound !== undefined) {
+            body += '   ファイル移動: ' + (detail.fileFound ? '成功' : 'ファイル未発見') + '\n';
+          }
+          body += '\n';
         }
       }
 
@@ -168,6 +249,7 @@ var NotificationService = (function () {
   return {
     sendDailyProcessingSummary: sendDailyProcessingSummary,
     sendRealtimeErrorNotification: sendRealtimeErrorNotification,
-    sendPartialFailureDetectionSummary: sendPartialFailureDetectionSummary
+    sendPartialFailureDetectionSummary: sendPartialFailureDetectionSummary,
+    isHighPriorityError: isHighPriorityError // テスト用に公開
   };
 })();

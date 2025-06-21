@@ -30,7 +30,6 @@ var ConfigManager = (function () {
       // 設定オブジェクトを構築
       _configCache = {
         // API設定
-        ASSEMBLYAI_API_KEY: envConfig.ASSEMBLYAI_API_KEY || '',
         OPENAI_API_KEY: envConfig.OPENAI_API_KEY || '',
 
         // フォルダ設定
@@ -72,7 +71,6 @@ var ConfigManager = (function () {
    */
   function getDefaultConfig() {
     return {
-      ASSEMBLYAI_API_KEY: '',
       OPENAI_API_KEY: '',
       SOURCE_FOLDER_ID: '',
       PROCESSING_FOLDER_ID: '',
@@ -178,7 +176,6 @@ var ConfigManager = (function () {
 
     // 必須設定のチェック
     var requiredKeys = [
-      'ASSEMBLYAI_API_KEY',
       'OPENAI_API_KEY',
       'SOURCE_FOLDER_ID',
       'PROCESSING_FOLDER_ID',

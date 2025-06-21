@@ -1,6 +1,10 @@
 /**
  * マスターテストランナー
  * 全てのテストスイートを一括実行し、総合的な結果を提供する
+ * 
+ * 追加されたテストスイート:
+ * - WhisperServiceTest: Whisperベース機能の単体テスト
+ * - WhisperIntegrationTest: Whisperベースシステムの統合テスト
  */
 
 /**
@@ -53,12 +57,48 @@ function runAllTests() {
     }
 
     // 5. 統合テスト
-    Logger.log("\n【5/5】統合テスト実行中...");
+    Logger.log("\n【5/7】統合テスト実行中...");
     try {
       var integrationResult = runAllRefactoringIntegrationTests();
       overallResults.push({ suite: "統合テスト", result: integrationResult, status: "成功" });
     } catch (error) {
       overallResults.push({ suite: "統合テスト", result: error.toString(), status: "失敗" });
+    }
+
+    // 6. Whisperサービス単体テスト
+    Logger.log("\n【6/7】Whisperサービステスト実行中...");
+    try {
+      var whisperResult = runWhisperServiceTests();
+      overallResults.push({ suite: "Whisperサービス", result: whisperResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "Whisperサービス", result: error.toString(), status: "失敗" });
+    }
+
+    // 7. Zoom単体テスト
+    Logger.log("\n【7/9】Zoom単体テスト実行中...");
+    try {
+      var zoomUnitResult = runZoomUnitTests();
+      overallResults.push({ suite: "Zoom単体", result: zoomUnitResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "Zoom単体", result: error.toString(), status: "失敗" });
+    }
+
+    // 8. Zoom統合テスト
+    Logger.log("\n【8/9】Zoom統合テスト実行中...");
+    try {
+      var zoomIntegrationResult = runZoomIntegrationTests();
+      overallResults.push({ suite: "Zoom統合", result: zoomIntegrationResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "Zoom統合", result: error.toString(), status: "失敗" });
+    }
+
+    // 9. Whisper統合テスト
+    Logger.log("\n【9/9】Whisper統合テスト実行中...");
+    try {
+      var whisperIntegrationResult = runWhisperIntegrationTests();
+      overallResults.push({ suite: "Whisper統合", result: whisperIntegrationResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "Whisper統合", result: error.toString(), status: "失敗" });
     }
 
     // 総合結果の出力
@@ -133,6 +173,13 @@ function runSpecificTestSuite(suiteName) {
       case "integration":
       case "統合":
         result = runAllRefactoringIntegrationTests();
+        break;
+      case "whisper":
+      case "whisperservice":
+        result = runWhisperServiceTests();
+        break;
+      case "whisperintegration":
+        result = runWhisperIntegrationTests();
         break;
       default:
         throw new Error("不明なテストスイート名: " + suiteName);
@@ -289,6 +336,8 @@ function showAvailableTests() {
   Logger.log("• runAllConstantsTests() - Constantsテスト");
   Logger.log("• runAllConfigManagerTests() - ConfigManagerテスト");
   Logger.log("• runAllRefactoringIntegrationTests() - 統合テスト");
+  Logger.log("• runWhisperServiceTests() - Whisperサービステスト");
+  Logger.log("• runWhisperIntegrationTests() - Whisper統合テスト");
 
   Logger.log("\n【特定テストスイート実行】");
   Logger.log("• runSpecificTestSuite('config') - 環境設定テストのみ");

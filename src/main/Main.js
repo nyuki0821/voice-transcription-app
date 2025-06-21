@@ -23,32 +23,7 @@
 
 // グローバル変数
 var SPREADSHEET_ID = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
-var settings = getSystemSettings();
-var NOTIFICATION_HOURS = [9, 12, 19]; // 通知を送信する時間（9時、12時、19時）
-
-/**
- * システム設定を取得する関数（下位互換性のため残す）
- * 新しいコードではConfigManager.getConfig()を使用すること
- */
-function getSystemSettings() {
-  return ConfigManager.getConfig();
-}
-
-/**
- * デフォルト設定を返す関数（下位互換性のため残す）
- * 新しいコードではConfigManager.getDefaultConfig()を使用すること
- */
-function getDefaultSettings() {
-  return ConfigManager.getDefaultConfig();
-}
-
-/**
- * 設定をロードする関数（下位互換性のため残す）
- * 新しいコードではConfigManager.getConfig()を使用すること
- */
-function loadSettings() {
-  return ConfigManager.getConfig();
-}
+var settings = ConfigManager.getConfig();
 
 /**
  * ファイルからメタデータを抽出する関数
@@ -470,6 +445,15 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
       sheet.getRange(1, 1, 1, 15).setValues([
         ['record_id', 'call_date', 'call_time', 'sales_phone_number', 'sales_company', 'customer_phone_number', 'customer_name', 'call_status1', 'call_status2', 'reason_for_refusal', 'reason_for_refusal_category', 'reason_for_appointment', 'reason_for_appointment_category', 'summary', 'full_transcript']
       ]);
+    } else {
+      // 既存シートの列数を確認して不足があれば拡張
+      var currentColumns = sheet.getMaxColumns();
+      var requiredColumns = 15;
+      if (currentColumns < requiredColumns) {
+        Logger.log('シートの列数が不足しています（現在: ' + currentColumns + ', 必要: ' + requiredColumns + '）。列を追加します。');
+        sheet.insertColumnsAfter(currentColumns, requiredColumns - currentColumns);
+        Logger.log('列を追加しました。新しい列数: ' + sheet.getMaxColumns());
+      }
     }
 
     // 最終行の次の行に追加
@@ -498,12 +482,23 @@ function saveCallRecordToSheet(callData, targetSpreadsheetId, sheetName) {
 
     Logger.log('挿入データ準備完了: record_id=' + callData.recordId + ', call_date=' + callData.callDate + ', call_time=' + callData.callTime);
 
+    // 行を追加前の安全チェック
+    var maxColumns = sheet.getMaxColumns();
+    if (rowData.length > maxColumns) {
+      Logger.log('データ列数がシート列数を超えています（データ: ' + rowData.length + ', シート: ' + maxColumns + '）。');
+      // 不足分の列を追加
+      sheet.insertColumnsAfter(maxColumns, rowData.length - maxColumns);
+      Logger.log('列を追加して調整しました。新しい列数: ' + sheet.getMaxColumns());
+    }
+
     // 行を追加
     try {
       sheet.getRange(newRow, 1, 1, rowData.length).setValues([rowData]);
       Logger.log('行の追加に成功しました');
     } catch (writeError) {
       Logger.log('行の追加中にエラー: ' + writeError.toString());
+      Logger.log('シート情報: 最大行=' + sheet.getMaxRows() + ', 最大列=' + sheet.getMaxColumns());
+      Logger.log('書き込み座標: 行=' + newRow + ', 列=1, データ列数=' + rowData.length);
       // エラーをそのまま上位に投げる
       throw writeError;
     }
@@ -532,8 +527,8 @@ function processBatch() {
     var localSettings = getSystemSettings();
 
     // APIキーと処理対象フォルダの確認
-    if (!localSettings.ASSEMBLYAI_API_KEY) {
-      throw new Error('Assembly AI APIキーが設定されていません');
+    if (!localSettings.OPENAI_API_KEY) {
+      throw new Error('OpenAI APIキーが設定されていません');
     }
 
     if (!localSettings.SOURCE_FOLDER_ID) {
@@ -580,7 +575,6 @@ function processBatch() {
         try {
           transcriptionResult = TranscriptionService.transcribe(
             file,
-            localSettings.ASSEMBLYAI_API_KEY,
             localSettings.OPENAI_API_KEY
           );
 
@@ -849,10 +843,10 @@ function processBatch() {
               fileEndTimeStr
             );
 
-            // エラーでも最低限の情報をスプレッドシートに書き込む
+            // エラー情報をログに記録（call_recordsシートには出力しない）
             try {
               if (errorMetadata && errorMetadata.recordId && errorMetadata.callDate && errorMetadata.callTime) {
-                // スプレッドシートに書き込み
+                // エラー情報の構築（ログ用）
                 var errorCallData = {
                   fileName: file.getName(),
                   recordId: errorMetadata.recordId,
@@ -872,16 +866,13 @@ function processBatch() {
                   transcription: 'エラー発生：' + error.toString()
                 };
 
-                // call_recordsシートに出力
-                var processedSheetId = localSettings.PROCESSED_SHEET_ID || '';
-                Logger.log('エラー情報の保存先: PROCESSED_SHEET_ID=' + processedSheetId);
-                saveCallRecordToSheet(errorCallData, processedSheetId, 'call_records');
-                Logger.log('エラー情報をスプレッドシートに保存しました');
+                // エラー時はcall_recordsシートに出力しない（ログのみ）
+                Logger.log('エラー情報: ' + JSON.stringify(errorCallData));
               } else {
                 Logger.log('必須メタデータが不足しているためスプレッドシートへの書き込みをスキップ');
               }
-            } catch (saveError) {
-              Logger.log('エラー情報のスプレッドシート保存中にエラー: ' + saveError.toString());
+            } catch (logError) {
+              Logger.log('エラー情報のログ出力中にエラー: ' + logError.toString());
             }
           } else {
             Logger.log('エラー処理中にrecord_idが特定できませんでした: ' + file.getName());
@@ -951,14 +942,11 @@ function processBatch() {
                     transcription: '最終手段による処理：' + error.toString()
                   };
 
-                  // call_recordsシートに出力
-                  var processedSheetId = localSettings.PROCESSED_SHEET_ID || '';
-                  Logger.log('最終手段の情報保存先: PROCESSED_SHEET_ID=' + processedSheetId);
-                  saveCallRecordToSheet(lastChanceData, processedSheetId, 'call_records');
-                  Logger.log('最終手段の情報をスプレッドシートに保存しました');
+                  // エラー時はcall_recordsシートに出力しない（ログのみ）
+                  Logger.log('最終手段処理情報: ' + JSON.stringify(lastChanceData));
                 }
-              } catch (lastSaveError) {
-                Logger.log('最終手段のスプレッドシート保存中にエラー: ' + lastSaveError.toString());
+              } catch (lastLogError) {
+                Logger.log('最終手段処理のログ出力中にエラー: ' + lastLogError.toString());
               }
             }
           } catch (lastError) {
@@ -1127,6 +1115,13 @@ function updateTranscriptionStatusByRecordId(recordId, status, processStart, pro
         ZoomphoneProcessor.updateRecordingStatus(rowIndex, status, 'transcription');
 
         // process_start（13列目）とprocess_end（14列目）を更新
+        // 列数チェック
+        var maxColumns = sheet.getMaxColumns();
+        if (maxColumns < 14) {
+          Logger.log('Recordingsシートの列数が不足しています（現在: ' + maxColumns + ', 必要: 14）。列を追加します。');
+          sheet.insertColumnsAfter(maxColumns, 14 - maxColumns);
+        }
+        
         if (processStart) sheet.getRange(rowIndex, 13).setValue(processStart);
         if (processEnd) sheet.getRange(rowIndex, 14).setValue(processEnd);
 

@@ -6,13 +6,13 @@
 ### フェーズ0: 現状分析およびGCP基盤準備 (期間: 約0.5ヶ月)
 
 **目標:**
-*   既存システム（`README.md`記載のZoom Phone連携、AssemblyAI、OpenAI活用、現行Cloud Functions等）のGCP環境への移行計画を策定する。
+*   既存システム（`README.md`記載のZoom Phone連携、OpenAI Whisper・GPT-4o-mini活用、現行Cloud Functions等）のGCP環境への移行計画を策定する。
 *   GCPプロジェクトのセットアップ、必要APIの有効化、IAM権限設定等の基盤構築を完了する。
 *   既存Cloud Functionsのロジックのうち、再利用可能な部分とGCPのベストプラクティスに基づき改修が必要な部分を明確化する。
 
 **主要タスク:**
 1.  **既存コード資産評価 (GCP移行観点):** `README.md`記載の `ZoomphoneProcessor.js` (GAS)、`TranscriptionPipeline` (GAS)、`cloud_function/index.js` (現行Cloud Functions)を対象に、Cloud Functions (Gen2) またはCloud Runへの移行戦略を策定する。
-2.  **APIキーおよび認証情報確認:** AssemblyAI, OpenAI, Zoom APIの有効なキー、およびGCPサービスアカウントの準備状況を確認する。
+2.  **APIキーおよび認証情報確認:** OpenAI, Zoom APIの有効なキー、およびGCPサービスアカウントの準備状況を確認する。
 3.  **GCPプロジェクト初期設定:** 新規または既存GCPプロジェクトにおいて、Cloud Storage, Firestore, Cloud Functions, Cloud Run, Pub/Sub, Cloud Logging, Cloud Monitoring API等を有効化し、初期設定を実施する。
 
 ---
@@ -34,13 +34,13 @@
             B --> D[Firestore - Recordings Collection]
         ```
 2.  **1-2: 文字起こし・基本分析処理パイプライン構築:**
-    *   **機能:** Cloud Storageへのファイル保存をトリガーとしたCloud Functionsの実行。既存のAssemblyAIおよびOpenAI連携ロジックを利用した文字起こしと基本情報抽出。処理結果 (文字起こしテキスト、抽出情報) のFirestoreへの保存。
+    *   **機能:** Cloud Storageへのファイル保存をトリガーとしたCloud Functionsの実行。既存のOpenAI Whisper・GPT-4o-mini連携ロジックを利用した文字起こしと基本情報抽出。処理結果 (文字起こしテキスト、抽出情報) のFirestoreへの保存。
     *   **アーキテクチャ:**
         ```mermaid
         graph LR
             C[Cloud Storage] --> E[Cloud Functions - Transcription & Analysis]
-            E --> F[AssemblyAI API]
-            E --> G[OpenAI API]
+            E --> F[OpenAI Whisper API]
+            E --> G[OpenAI GPT-4o-mini API]
             E --> H[Firestore - AnalysisResults Collection]
         ```
 3.  **1-3: 基本ファイルステータス管理とエラーログ記録:**
