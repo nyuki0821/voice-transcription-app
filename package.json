@@ -3,7 +3,12 @@
   "version": "1.0.0",
   "main": "FileProcessor.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node src/test/MasterTestRunner.js",
+    "test:unit": "node src/test/unit-tests.js",
+    "test:integration": "node src/test/integration-tests.js",
+    "lint": "eslint src/**/*.js",
+    "lint:fix": "eslint src/**/*.js --fix",
+    "validate": "node scripts/validate-gas-syntax.js",
     "push": "clasp push",
     "watch": "clasp push --watch",
     "open": "clasp open",
@@ -22,6 +27,8 @@
   "homepage": "https://github.com/nyuki0821/voice-transcription-app#readme",
   "description": "",
   "devDependencies": {
-    "@types/google-apps-script": "^1.0.97"
+    "@types/google-apps-script": "^1.0.97",
+    "eslint": "^8.0.0",
+    "eslint-config-google": "^0.14.0"
   }
 }
