@@ -76,6 +76,11 @@ var Constants = (function () {
   var FILE = {
     AUDIO_MIME_TYPES: ['audio/', 'application/octet-stream'],
     AUDIO_EXTENSIONS: ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.wma'],
+    FILENAME_PATTERNS: {
+      ZOOM_CALL: /zoom_call_\d+_([a-f0-9]+)\.mp3/i,
+      CALL_RECORDING: /call_recording_([a-f0-9-]+)_\d+\.mp3/i
+    },
+    // 後方互換性のため
     FILENAME_PATTERN: /zoom_call_\d+_([a-f0-9]+)\.mp3/i
   };
 
@@ -164,8 +169,25 @@ var Constants = (function () {
   function extractRecordIdFromFileName(fileName) {
     if (!fileName) return null;
 
-    var match = fileName.match(FILE.FILENAME_PATTERN);
-    return match && match[1] ? match[1] : null;
+    // zoom_call_ パターンを試行
+    var zoomMatch = fileName.match(FILE.FILENAME_PATTERNS.ZOOM_CALL);
+    if (zoomMatch && zoomMatch[1]) {
+      return zoomMatch[1];
+    }
+
+    // call_recording_ パターンを試行
+    var callMatch = fileName.match(FILE.FILENAME_PATTERNS.CALL_RECORDING);
+    if (callMatch && callMatch[1]) {
+      return callMatch[1];
+    }
+
+    // 後方互換性のため、より広いパターンも試行
+    var genericMatch = fileName.match(/.*_([a-f0-9-]{32,36}).*\.mp3$/i);
+    if (genericMatch && genericMatch[1]) {
+      return genericMatch[1];
+    }
+
+    return null;
   }
 
   // 公開オブジェクト

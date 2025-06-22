@@ -92,17 +92,26 @@ var FileProcessor = (function () {
         });
       }
 
-      // ファイル名からrecord_idを抽出する正規表現パターン
-      var recordIdPattern = /zoom_call_\d+_(\w+)\.mp3/;
+      // ファイル名からrecord_idを抽出する正規表現パターン（複数パターン対応）
+      var recordIdPatterns = [
+        /zoom_call_\d+_(\w+)\.mp3/,
+        /call_recording_([a-f0-9-]+)_\d+\.mp3/i
+      ];
 
       // 各ファイルにRecordingsシートの情報を関連付ける
       return files.map(function (file) {
         var fileName = file.getName();
         var metadata = null;
 
-        // ファイル名からrecord_idを抽出
-        var match = fileName.match(recordIdPattern);
-        var recordId = match ? match[1] : null;
+        // ファイル名からrecord_idを抽出（複数パターンを試行）
+        var recordId = null;
+        for (var j = 0; j < recordIdPatterns.length; j++) {
+          var match = fileName.match(recordIdPatterns[j]);
+          if (match && match[1]) {
+            recordId = match[1];
+            break;
+          }
+        }
 
         if (recordId) {
           // Recordingsシートでrecord_idに一致する行を検索

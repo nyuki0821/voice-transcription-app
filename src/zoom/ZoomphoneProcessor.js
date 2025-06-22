@@ -78,10 +78,10 @@ var ZoomphoneProcessor = (function () {
   }
 
   /**
-   * Recordingsシートから未処理の録音情報を取得して処理する
-   * @param {Date} [fromDate] 取得する開始日時（オプション）- 指定した場合、この時刻以降の録音のみを処理
-   * @param {Date} [toDate] 取得する終了日時（オプション）- 指定した場合、この時刻以前の録音のみを処理
-   * @returns {Object} 処理結果 { success: boolean, fetched: number, saved: number }
+   * Recordingsシートから録音を処理する
+   * @param {Date} [fromDate] 取得する開始日時（オプション）
+   * @param {Date} [toDate] 取得する終了日時（オプション）
+   * @returns {Object} 処理結果
    */
   function processRecordingsFromSheet(fromDate, toDate) {
     try {
@@ -102,6 +102,13 @@ var ZoomphoneProcessor = (function () {
       Logger.log('Recordingsシートから取得した未処理録音: ' + pendingRecordings.length + '件');
 
       var saved = 0, fetched = pendingRecordings.length;
+      var errorDetails = {
+        processType: 'Zoom録音取得',
+        total: fetched,
+        success: 0,
+        error: 0,
+        errors: []
+      };
 
       for (var i = 0; i < pendingRecordings.length; i++) {
         var rec = pendingRecordings[i];
@@ -110,6 +117,16 @@ var ZoomphoneProcessor = (function () {
 
         if (!id || !url) {
           Logger.log('録音ID/URLがありません: ' + JSON.stringify(rec));
+          var errorInfo = {
+            recordId: id || 'unknown',
+            phoneNumber: rec.phoneNumber,
+            duration: rec.duration,
+            message: '録音ID またはダウンロードURLが見つかりません',
+            errorCode: 'MISSING_DATA',
+            timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+          };
+          errorDetails.errors.push(errorInfo);
+          errorDetails.error++;
           continue;
         }
 
@@ -117,33 +134,80 @@ var ZoomphoneProcessor = (function () {
           // 既に処理済みのIDはスキップ
           Logger.log('既に処理済みのID: ' + id);
           updateRecordingStatus(rec.rowIndex, 'DUPLICATE');
+          errorDetails.success++;
           continue;
         }
 
-        var blob = ZoomphoneService.downloadBlob(url);
-        Utilities.sleep(200); // Zoom API rate limit 対策
+        try {
+          var blob = ZoomphoneService.downloadBlob(url);
+          Utilities.sleep(200); // Zoom API rate limit 対策
 
-        if (!blob) {
-          Logger.log('録音ファイルの取得に失敗: ' + id);
-          updateRecordingStatus(rec.rowIndex, 'DOWNLOAD_ERROR');
-          continue;
-        }
+          if (!blob) {
+            Logger.log('録音ファイルの取得に失敗: ' + id);
+            updateRecordingStatus(rec.rowIndex, 'DOWNLOAD_ERROR');
 
-        var recMeta = {
-          id: id,
-          date_time: rec.startTime,
-          duration: rec.duration,
-          caller_number: rec.phoneNumber,
-          direction: 'unknown'
-        };
+            var errorInfo = {
+              recordId: id,
+              downloadUrl: url,
+              phoneNumber: rec.phoneNumber,
+              duration: rec.duration,
+              message: '録音ファイルのダウンロードに失敗しました。URLが無効またはファイルが存在しません。',
+              errorCode: 'DOWNLOAD_FAILED',
+              timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+            };
+            errorDetails.errors.push(errorInfo);
+            errorDetails.error++;
+            continue;
+          }
 
-        var file = ZoomphoneService.saveRecordingToDrive(blob, recMeta, folderId);
-        if (file) {
-          markCallAsProcessed(id);
-          updateRecordingStatus(rec.rowIndex, 'PROCESSED');
-          saved++;
-        } else {
-          updateRecordingStatus(rec.rowIndex, 'SAVE_ERROR');
+          var recMeta = {
+            id: id,
+            date_time: rec.startTime,
+            duration: rec.duration,
+            caller_number: rec.phoneNumber,
+            direction: 'unknown'
+          };
+
+          var file = ZoomphoneService.saveRecordingToDrive(blob, recMeta, folderId);
+          if (file) {
+            markCallAsProcessed(id);
+            updateRecordingStatus(rec.rowIndex, 'PROCESSED');
+            saved++;
+            errorDetails.success++;
+          } else {
+            updateRecordingStatus(rec.rowIndex, 'SAVE_ERROR');
+
+            var errorInfo = {
+              recordId: id,
+              downloadUrl: url,
+              phoneNumber: rec.phoneNumber,
+              duration: rec.duration,
+              message: 'Google Driveへの保存に失敗しました。ストレージ容量またはアクセス権限を確認してください。',
+              errorCode: 'SAVE_FAILED',
+              timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+            };
+            errorDetails.errors.push(errorInfo);
+            errorDetails.error++;
+          }
+        } catch (downloadError) {
+          Logger.log('録音処理中にエラー: ' + downloadError.toString());
+          updateRecordingStatus(rec.rowIndex, 'ERROR: ' + downloadError.toString().substring(0, 50));
+
+          var errorInfo = {
+            recordId: id,
+            downloadUrl: url,
+            phoneNumber: rec.phoneNumber,
+            duration: rec.duration,
+            message: downloadError.toString(),
+            errorCode: 'PROCESSING_ERROR',
+            timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+          };
+
+          // 詳細なエラーログを記録
+          NotificationService.logDetailedError(errorInfo, 'Zoom録音取得');
+
+          errorDetails.errors.push(errorInfo);
+          errorDetails.error++;
         }
 
         // 実行時間チェック: 4分を超える前に中断
@@ -153,9 +217,49 @@ var ZoomphoneProcessor = (function () {
         }
       }
 
-      return { success: true, fetched: fetched, saved: saved };
+      // エラーが発生した場合は統一フォーマットで通知
+      if (errorDetails.error > 0) {
+        try {
+          var config = EnvironmentConfig.getConfig();
+          var adminEmails = config.ADMIN_EMAILS || [];
+
+          for (var i = 0; i < adminEmails.length; i++) {
+            NotificationService.sendUnifiedErrorNotification(adminEmails[i], errorDetails);
+          }
+          Logger.log('Zoom録音取得エラー通知メールを送信しました');
+        } catch (notificationError) {
+          Logger.log('エラー通知メール送信中にエラー: ' + notificationError.toString());
+        }
+      }
+
+      return { success: true, fetched: fetched, saved: saved, errorDetails: errorDetails };
     } catch (e) {
       Logger.log('Recordingsシートからの処理でエラー: ' + e.toString());
+
+      // 全体的なエラーの場合も統一フォーマットで通知
+      var criticalErrorDetails = {
+        processType: 'Zoom録音取得',
+        total: 0,
+        success: 0,
+        error: 1,
+        errors: [{
+          message: e.toString(),
+          errorCode: 'CRITICAL_ERROR',
+          timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+        }]
+      };
+
+      try {
+        var config = EnvironmentConfig.getConfig();
+        var adminEmails = config.ADMIN_EMAILS || [];
+
+        for (var i = 0; i < adminEmails.length; i++) {
+          NotificationService.sendUnifiedErrorNotification(adminEmails[i], criticalErrorDetails);
+        }
+      } catch (notificationError) {
+        Logger.log('重要エラー通知メール送信中にエラー: ' + notificationError.toString());
+      }
+
       return { success: false, error: e.toString() };
     }
   }
@@ -281,7 +385,7 @@ var ZoomphoneProcessor = (function () {
       // 列数の安全チェック
       var maxColumns = sheet.getMaxColumns();
       var requiredColumns = statusType === 'fetch' ? 10 : 12;
-      
+
       if (maxColumns < requiredColumns) {
         Logger.log('Recordingsシートの列数が不足しています（現在: ' + maxColumns + ', 必要: ' + requiredColumns + '）。列を追加します。');
         sheet.insertColumnsAfter(maxColumns, requiredColumns - maxColumns);
