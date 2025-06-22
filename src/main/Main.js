@@ -26,6 +26,29 @@ var SPREADSHEET_ID = EnvironmentConfig.get('RECORDINGS_SHEET_ID', '');
 var settings = ConfigManager.getConfig();
 
 /**
+ * ファイル名からタイムスタンプを抽出する関数
+ * @param {string} fileName - ファイル名
+ * @return {string|null} 抽出されたタイムスタンプ (YYYYMMDDhhmmss形式)
+ */
+function extractTimestampFromFileName(fileName) {
+  if (!fileName) return null;
+
+  // zoom_call_ パターンからタイムスタンプを抽出
+  var zoomMatch = fileName.match(/zoom_call_(\d+)_[a-f0-9]+\.mp3/i);
+  if (zoomMatch && zoomMatch[1]) {
+    return zoomMatch[1];
+  }
+
+  // call_recording_ パターンからタイムスタンプを抽出
+  var callMatch = fileName.match(/call_recording_[a-f0-9-]+_(\d+)\.mp3/i);
+  if (callMatch && callMatch[1]) {
+    return callMatch[1];
+  }
+
+  return null;
+}
+
+/**
  * ファイルからメタデータを抽出する関数
  * @param {string} fileName - ファイル名
  * @return {Object} 抽出されたメタデータ
@@ -165,93 +188,85 @@ function extractMetadataFromFile(fileName) {
           Logger.log('メタデータのJSONパース失敗: ' + jsonError.toString());
 
           // JSONパース失敗時はファイル名からレコードIDの抽出を試みる
-          var fileNameMatch = fileName.match(/zoom_call_(\d+)_([a-f0-9]+)\.mp3/i);
-          if (fileNameMatch) {
-            // タイムスタンプとレコードIDを抽出
-            var timestamp = fileNameMatch[1];
-            var recordId = fileNameMatch[2];
+          var recordId = Constants.extractRecordIdFromFileName(fileName);
+          var timestamp = null;
 
-            if (recordId) {
-              result.recordId = recordId;
-              Logger.log('ファイル名からrecord_idを抽出: ' + recordId);
+          // zoom_call_ パターンの場合はタイムスタンプも抽出
+          var zoomMatch = fileName.match(/zoom_call_(\d+)_([a-f0-9]+)\.mp3/i);
+          if (zoomMatch) {
+            timestamp = zoomMatch[1];
+          }
 
-              // Recordingsシートからメタデータを取得
-              var sheetMetadata = getMetadataFromRecordingsSheet(recordId);
-              if (sheetMetadata) {
-                Logger.log('Recordingsシートからメタデータを取得: ' + JSON.stringify(sheetMetadata));
+          // call_recording_ パターンの場合は末尾のタイムスタンプを抽出
+          var callMatch = fileName.match(/call_recording_[a-f0-9-]+_(\d+)\.mp3/i);
+          if (callMatch) {
+            timestamp = callMatch[1];
+          }
 
-                // Recordingsシートから取得した情報を優先的に使用
-                if (sheetMetadata.callDate) result.callDate = sheetMetadata.callDate;
-                if (sheetMetadata.callTime) result.callTime = sheetMetadata.callTime;
-                if (sheetMetadata.salesPhoneNumber) result.salesPhoneNumber = sheetMetadata.salesPhoneNumber;
-                if (sheetMetadata.customerPhoneNumber) result.customerPhoneNumber = sheetMetadata.customerPhoneNumber;
+          if (recordId) {
+            result.recordId = recordId;
+            Logger.log('ファイル名からrecord_idを抽出: ' + recordId);
 
-                // もし日付と時間が取得できた場合は、タイムスタンプからの抽出をスキップ
-                if (result.callDate && result.callTime) {
-                  Logger.log('Recordingsシートから日付と時間を取得しました。タイムスタンプからの抽出をスキップします。');
-                  return result;
-                }
+            // Recordingsシートからメタデータを取得
+            var sheetMetadata = getMetadataFromRecordingsSheet(recordId);
+            if (sheetMetadata) {
+              Logger.log('Recordingsシートからメタデータを取得: ' + JSON.stringify(sheetMetadata));
+
+              // Recordingsシートから取得した情報を優先的に使用
+              if (sheetMetadata.callDate) result.callDate = sheetMetadata.callDate;
+              if (sheetMetadata.callTime) result.callTime = sheetMetadata.callTime;
+              if (sheetMetadata.salesPhoneNumber) result.salesPhoneNumber = sheetMetadata.salesPhoneNumber;
+              if (sheetMetadata.customerPhoneNumber) result.customerPhoneNumber = sheetMetadata.customerPhoneNumber;
+
+              // もし日付と時間が取得できた場合は、タイムスタンプからの抽出をスキップ
+              if (result.callDate && result.callTime) {
+                Logger.log('Recordingsシートから日付と時間を取得しました。タイムスタンプからの抽出をスキップします。');
+                return result;
               }
+            }
 
-              // 日付と時間がRecordingsシートから取得できなかった場合のみタイムスタンプから抽出
-              if ((!result.callDate || !result.callTime) && timestamp && timestamp.length >= 14) {
-                // YYYYMMDDhhmmss 形式を解析
-                var year = timestamp.substring(0, 4);
-                var month = timestamp.substring(4, 6);
-                var day = timestamp.substring(6, 8);
-                var hour = timestamp.substring(8, 10);
-                var minute = timestamp.substring(10, 12);
-                var second = timestamp.substring(12, 14);
+            // 日付と時間がRecordingsシートから取得できなかった場合のみタイムスタンプから抽出
+            if ((!result.callDate || !result.callTime) && timestamp && timestamp.length >= 14) {
+              // YYYYMMDDhhmmss 形式を解析
+              var year = timestamp.substring(0, 4);
+              var month = timestamp.substring(4, 6);
+              var day = timestamp.substring(6, 8);
+              var hour = timestamp.substring(8, 10);
+              var minute = timestamp.substring(10, 12);
+              var second = timestamp.substring(12, 14);
 
-                var dateStr = year + '-' + month + '-' + day;
-                var timeStr = hour + ':' + minute + ':' + second;
+              var dateStr = year + '-' + month + '-' + day;
+              var timeStr = hour + ':' + minute + ':' + second;
 
-                if (!result.callDate) result.callDate = dateStr;
-                if (!result.callTime) result.callTime = timeStr;
+              if (!result.callDate) result.callDate = dateStr;
+              if (!result.callTime) result.callTime = timeStr;
 
-                Logger.log('ファイル名からタイムスタンプを抽出: ' + dateStr + ' ' + timeStr);
-              }
+              Logger.log('ファイル名からタイムスタンプを抽出: ' + dateStr + ' ' + timeStr);
             }
           }
         }
-      } else {
-        // description が空の場合もファイル名からの抽出を試みる
-        var fileNameMatch = fileName.match(/zoom_call_(\d+)_([a-f0-9]+)\.mp3/i);
-        if (fileNameMatch && fileNameMatch[2]) {
-          result.recordId = fileNameMatch[2];
-          Logger.log('ファイル名から直接record_idを抽出: ' + result.recordId);
+      }
+    } else {
+      // description が空の場合もファイル名からの抽出を試みる
+      var recordId = Constants.extractRecordIdFromFileName(fileName);
+      if (recordId) {
+        result.recordId = recordId;
+        Logger.log('ファイル名から直接record_idを抽出: ' + result.recordId);
 
-          // Recordingsシートからメタデータを取得
-          var sheetMetadata = getMetadataFromRecordingsSheet(result.recordId);
-          if (sheetMetadata) {
-            Logger.log('Recordingsシートからメタデータを取得: ' + JSON.stringify(sheetMetadata));
+        // Recordingsシートからメタデータを取得
+        var sheetMetadata = getMetadataFromRecordingsSheet(result.recordId);
+        if (sheetMetadata) {
+          Logger.log('Recordingsシートからメタデータを取得: ' + JSON.stringify(sheetMetadata));
 
-            // Recordingsシートから取得した情報を設定
-            if (sheetMetadata.callDate) result.callDate = sheetMetadata.callDate;
-            if (sheetMetadata.callTime) result.callTime = sheetMetadata.callTime;
-            if (sheetMetadata.salesPhoneNumber) result.salesPhoneNumber = sheetMetadata.salesPhoneNumber;
-            if (sheetMetadata.customerPhoneNumber) result.customerPhoneNumber = sheetMetadata.customerPhoneNumber;
+          // Recordingsシートから取得した情報を設定
+          if (sheetMetadata.callDate) result.callDate = sheetMetadata.callDate;
+          if (sheetMetadata.callTime) result.callTime = sheetMetadata.callTime;
+          if (sheetMetadata.salesPhoneNumber) result.salesPhoneNumber = sheetMetadata.salesPhoneNumber;
+          if (sheetMetadata.customerPhoneNumber) result.customerPhoneNumber = sheetMetadata.customerPhoneNumber;
 
-            // タイムスタンプからの抽出が必要かチェック
-            if (!result.callDate || !result.callTime) {
-              var timestamp = fileNameMatch[1];
-              if (timestamp && timestamp.length >= 14) {
-                var year = timestamp.substring(0, 4);
-                var month = timestamp.substring(4, 6);
-                var day = timestamp.substring(6, 8);
-                var hour = timestamp.substring(8, 10);
-                var minute = timestamp.substring(10, 12);
-                var second = timestamp.substring(12, 14);
-
-                if (!result.callDate) result.callDate = year + '-' + month + '-' + day;
-                if (!result.callTime) result.callTime = hour + ':' + minute + ':' + second;
-
-                Logger.log('ファイル名からタイムスタンプを補完: ' + result.callDate + ' ' + result.callTime);
-              }
-            }
-          } else {
-            // Recordingsシートからデータが取得できない場合はファイル名のタイムスタンプから抽出
-            var timestamp = fileNameMatch[1];
+          // タイムスタンプからの抽出が必要かチェック
+          if (!result.callDate || !result.callTime) {
+            var timestamp = extractTimestampFromFileName(fileName);
             if (timestamp && timestamp.length >= 14) {
               var year = timestamp.substring(0, 4);
               var month = timestamp.substring(4, 6);
@@ -260,11 +275,27 @@ function extractMetadataFromFile(fileName) {
               var minute = timestamp.substring(10, 12);
               var second = timestamp.substring(12, 14);
 
-              result.callDate = year + '-' + month + '-' + day;
-              result.callTime = hour + ':' + minute + ':' + second;
+              if (!result.callDate) result.callDate = year + '-' + month + '-' + day;
+              if (!result.callTime) result.callTime = hour + ':' + minute + ':' + second;
 
-              Logger.log('ファイル名から日付と時間を抽出: ' + result.callDate + ' ' + result.callTime);
+              Logger.log('ファイル名からタイムスタンプを補完: ' + result.callDate + ' ' + result.callTime);
             }
+          }
+        } else {
+          // Recordingsシートからデータが取得できない場合はファイル名のタイムスタンプから抽出
+          var timestamp = extractTimestampFromFileName(fileName);
+          if (timestamp && timestamp.length >= 14) {
+            var year = timestamp.substring(0, 4);
+            var month = timestamp.substring(4, 6);
+            var day = timestamp.substring(6, 8);
+            var hour = timestamp.substring(8, 10);
+            var minute = timestamp.substring(10, 12);
+            var second = timestamp.substring(12, 14);
+
+            result.callDate = year + '-' + month + '-' + day;
+            result.callTime = hour + ':' + minute + ':' + second;
+
+            Logger.log('ファイル名から日付と時間を抽出: ' + result.callDate + ' ' + result.callTime);
           }
         }
       }
@@ -274,9 +305,9 @@ function extractMetadataFromFile(fileName) {
 
     // 最終手段としてファイル名からの抽出を試みる
     try {
-      var fileNameMatch = fileName.match(/zoom_call_(\d+)_([a-f0-9]+)\.mp3/i);
-      if (fileNameMatch && fileNameMatch[2]) {
-        result.recordId = fileNameMatch[2];
+      var recordId = Constants.extractRecordIdFromFileName(fileName);
+      if (recordId) {
+        result.recordId = recordId;
         Logger.log('エラー後のファイル名からの直接抽出: record_id=' + result.recordId);
 
         // Recordingsシートからメタデータを取得試行
@@ -676,10 +707,10 @@ function processBatch() {
 
         // 必要なメタデータが取得できなかった場合はファイル名から直接抽出を試みる
         if (!metadata.recordId) {
-          // ファイル名からrecordIdを直接抽出（例：zoom_call_20250519015737_96f847c2df6f46b684b046f2046efc8d.mp3）
-          var fileNameMatch = file.getName().match(/zoom_call_\d+_([a-f0-9]+)\.mp3/i);
-          if (fileNameMatch && fileNameMatch[1]) {
-            metadata.recordId = fileNameMatch[1];
+          // ファイル名からrecordIdを直接抽出
+          var recordId = Constants.extractRecordIdFromFileName(file.getName());
+          if (recordId) {
+            metadata.recordId = recordId;
             Logger.log('メタデータ抽出失敗後、ファイル名から直接record_idを抽出: ' + metadata.recordId);
 
             // Recordingsシートから電話番号情報を補完
@@ -690,9 +721,8 @@ function processBatch() {
             }
 
             // ファイル名から日付と時間を抽出
-            var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
-            if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
-              var timestamp = timestampMatch[1];
+            var timestamp = extractTimestampFromFileName(file.getName());
+            if (timestamp && timestamp.length >= 14) {
               var year = timestamp.substring(0, 4);
               var month = timestamp.substring(4, 6);
               var day = timestamp.substring(6, 8);
@@ -721,9 +751,8 @@ function processBatch() {
           Logger.log('record_idはあるが時間情報が不足しているため、補完を試みます');
 
           // ファイル名から日付と時間を抽出
-          var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
-          if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
-            var timestamp = timestampMatch[1];
+          var timestamp = extractTimestampFromFileName(file.getName());
+          if (timestamp && timestamp.length >= 14) {
             var year = timestamp.substring(0, 4);
             var month = timestamp.substring(4, 6);
             var day = timestamp.substring(6, 8);
@@ -766,8 +795,8 @@ function processBatch() {
         Logger.log('文字起こし結果の保存先: PROCESSED_SHEET_ID=' + processedSheetId);
         saveCallRecordToSheet(callData, processedSheetId, 'call_records');
 
-        // ファイルを完了フォルダに移動
-        FileProcessor.moveFileToFolder(file, localSettings.COMPLETED_FOLDER_ID);
+        // ファイルを完了フォルダに移動（共有ドライブ対応のフォールバック機能付き）
+        FileMovementService.moveFileWithFallback(file, localSettings.COMPLETED_FOLDER_ID);
 
         // 処理カウント更新
         results.processed++;
@@ -791,16 +820,15 @@ function processBatch() {
 
           // メタデータからrecordIdが取得できない場合はファイル名から直接抽出
           if (!errorMetadata || !errorMetadata.recordId) {
-            var fileNameMatch = file.getName().match(/zoom_call_\d+_([a-f0-9]+)\.mp3/i);
-            if (fileNameMatch && fileNameMatch[1]) {
+            var recordId = Constants.extractRecordIdFromFileName(file.getName());
+            if (recordId) {
               if (!errorMetadata) errorMetadata = {};
-              errorMetadata.recordId = fileNameMatch[1];
+              errorMetadata.recordId = recordId;
               Logger.log('エラー処理中にファイル名から直接record_idを抽出: ' + errorMetadata.recordId);
 
               // ファイル名から日付と時間を抽出
-              var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
-              if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
-                var timestamp = timestampMatch[1];
+              var timestamp = extractTimestampFromFileName(file.getName());
+              if (timestamp && timestamp.length >= 14) {
                 var year = timestamp.substring(0, 4);
                 var month = timestamp.substring(4, 6);
                 var day = timestamp.substring(6, 8);
@@ -818,9 +846,8 @@ function processBatch() {
           // 時間情報が欠けている場合も補完
           if (errorMetadata && errorMetadata.recordId && (!errorMetadata.callDate || !errorMetadata.callTime)) {
             // ファイル名から日付と時間を抽出
-            var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
-            if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
-              var timestamp = timestampMatch[1];
+            var timestamp = extractTimestampFromFileName(file.getName());
+            if (timestamp && timestamp.length >= 14) {
               var year = timestamp.substring(0, 4);
               var month = timestamp.substring(4, 6);
               var day = timestamp.substring(6, 8);
@@ -882,18 +909,16 @@ function processBatch() {
 
           // 最後の手段としてファイル名からの抽出を試みる
           try {
-            var lastChanceMatch = file.getName().match(/zoom_call_\d+_([a-f0-9]+)\.mp3/i);
-            if (lastChanceMatch && lastChanceMatch[1]) {
-              var recordId = lastChanceMatch[1];
+            var recordId = Constants.extractRecordIdFromFileName(file.getName());
+            if (recordId) {
               Logger.log('エラー処理の最終手段でファイル名からrecord_idを抽出: ' + recordId);
 
               // ファイル名から日付と時間を抽出
-              var timestampMatch = file.getName().match(/zoom_call_(\d+)_/i);
+              var timestamp = extractTimestampFromFileName(file.getName());
               var callDate = null;
               var callTime = null;
 
-              if (timestampMatch && timestampMatch[1] && timestampMatch[1].length >= 14) {
-                var timestamp = timestampMatch[1];
+              if (timestamp && timestamp.length >= 14) {
                 var year = timestamp.substring(0, 4);
                 var month = timestamp.substring(4, 6);
                 var day = timestamp.substring(6, 8);
@@ -954,9 +979,9 @@ function processBatch() {
           }
         }
 
-        // ファイルをエラーフォルダに移動
+        // ファイルをエラーフォルダに移動（共有ドライブ対応のフォールバック機能付き）
         try {
-          FileProcessor.moveFileToFolder(file, localSettings.ERROR_FOLDER_ID);
+          FileMovementService.moveFileWithFallback(file, localSettings.ERROR_FOLDER_ID);
         } catch (moveError) {
           Logger.log('ファイルの移動中にエラー: ' + moveError.toString());
         }
