@@ -93,19 +93,7 @@ var InformationExtractor = (function () {
         "\"call_status1\":\"\", \"call_status2\":\"\", \"reason_for_refusal\":\"\", \"reason_for_refusal_category\":\"\", " +
         "\"reason_for_appointment\":\"\", \"reason_for_appointment_category\":\"\", \"summary\":\"\"}\n\n" +
         "【sales_companyの候補リスト】\n" +
-        "営業会社名は以下のリストから最も適切なものを選んでください。会話は基本的にこのリストの会社のいずれかから行われています。営業担当者が自社名を名乗っている部分を特定し、該当する会社を選択してください。名乗りがない場合や自動音声のみの非常に短い会話でない限り、必ずいずれかの会社を選択してください：\n" +
-        "・株式会社ENERALL（エネラル）\n" +
-        "・エムスリーヘルスデザイン株式会社（エムスリーヘルスデザイン）\n" +
-        "・株式会社TOKIUM\n" +
-        "・株式会社グッドワークス\n" +
-        "・テコム看護\n" +
-        "・ハローワールド株式会社\n" +
-        "・株式会社ワーサル\n" +
-        "・株式会社NOTCH（ノッチ）\n" +
-        "・株式会社ジースタイラス\n" +
-        "・株式会社佑人社（ゆうじんしゃ）\n" +
-        "・株式会社リディラバ\n" +
-        "・株式会社インフィニットマインド\n\n" +
+        ClientMasterDataLoader.getClientListPrompt() + "\n" +
         "【call_statusの定義】\n" +
         "・call_status1：\n" +
         "  ・コンタクト: 意思決定に関わる担当者と会話 かつ 製品・サービスの詳細な説明ができた場合。単に「ご案内」と言っただけでは不十分で、製品・サービスの具体的な内容や特徴について適切な担当者へ説明できた場合のみ。取次担当者や受付の方には説明できても、最終的に意思決定者や関連部署の担当者に説明できなかった場合は非コンタクト。\n" +
@@ -253,36 +241,25 @@ var InformationExtractor = (function () {
         var suspiciousInfo = false;
 
         // 会話に含まれない会社名が抽出されていないか確認
-        if (cleanInfo.sales_company && text.indexOf(cleanInfo.sales_company) === -1 &&
-          // 部分的な会社名も確認
-          !text.includes('グッドワークス') &&
-          !text.includes('ENERALL') &&
-          !text.includes('ENERRALL') && // ENERALL誤認識パターン
-          !text.includes('エネラル') && // ENERALLの読み方
-          !text.includes('エネラール') && // ENERALLの読み方
-          !text.includes('エナラル') && // ENERALLの誤認識パターン
-          !text.includes('トキウム') &&
-          !text.includes('TOKIUM') &&
-          !text.includes('ワーサル') &&
-          !text.includes('NOTCH') &&
-          !text.includes('NOCH') && // NOTCH誤認識パターン
-          !text.includes('ノッチ') && // NOTCHの読み方
-          !text.includes('ノーチ') && // NOTCHの誤認識パターン
-          !text.includes('ジースタイラス') &&
-          !text.includes('佑人社') &&
-          !text.includes('有人社') && // 佑人社の誤認識パターン
-          !text.includes('勇人社') && // 佑人社の誤認識パターン
-          !text.includes('優人社') && // 佑人社の誤認識パターン
-          !text.includes('ゆうじんしゃ') && // 佑人社の読み方
-          !text.includes('ユウジンシャ') && // 佑人社の読み方
-          !text.includes('テコム') &&
-          !text.includes('エムスリー') &&
-          !text.includes('エムスリーヘルス') && // エムスリーヘルスデザインの短縮表記
-          !text.includes('M3ヘルス') && // エムスリーヘルスデザインの誤認識パターン
-          !text.includes('リディラバ') &&
-          !text.includes('インフィニットマインド')) {
-          cleanInfo.sales_company = "";
-          suspiciousInfo = true;
+        if (cleanInfo.sales_company && text.indexOf(cleanInfo.sales_company) === -1) {
+          // 会社名のエイリアスを確認
+          var companyAliases = ClientMasterDataLoader.getClientCompanyAliases();
+          var foundAlias = false;
+
+          if (companyAliases[cleanInfo.sales_company]) {
+            var aliases = companyAliases[cleanInfo.sales_company];
+            for (var i = 0; i < aliases.length; i++) {
+              if (text.includes(aliases[i])) {
+                foundAlias = true;
+                break;
+              }
+            }
+          }
+
+          if (!foundAlias) {
+            cleanInfo.sales_company = "";
+            suspiciousInfo = true;
+          }
         }
 
         if (suspiciousInfo) {
@@ -507,62 +484,24 @@ var InformationExtractor = (function () {
       }
     }
 
-    // 許可リストの会社名（validateSalesCompanyから取得）
-    var allowedCompanies = [
-      "株式会社ENERALL",
-      "エムスリーヘルスデザイン株式会社",
-      "株式会社TOKIUM",
-      "株式会社グッドワークス",
-      "テコム看護",
-      "ハローワールド株式会社",
-      "株式会社ワーサル",
-      "株式会社NOTCH",
-      "株式会社ジースタイラス",
-      "株式会社佑人社",
-      "株式会社リディラバ",
-      "株式会社インフィニットマインド"
-    ];
+    // 許可リストの会社名（ClientMasterDataLoaderから取得）
+    var allowedCompanies = ClientMasterDataLoader.getClientCompanies();
 
-    // 会社名の特徴的な部分のリストを作成（「株式会社」を除いた部分など）
-    var companyKeywords = allowedCompanies.map(function (company) {
-      return company.replace(/株式会社|エムスリーヘルスデザイン|テコム看護|ハローワールド/g, "").trim();
-    }).filter(function (keyword) {
-      return keyword.length > 0;
+    // 会社名のエイリアスを取得
+    var companyAliases = ClientMasterDataLoader.getClientCompanyAliases();
+    var companyKeywords = [];
+
+    // すべての会社のエイリアスをフラットなリストに展開
+    for (var company in companyAliases) {
+      if (companyAliases.hasOwnProperty(company)) {
+        companyKeywords = companyKeywords.concat(companyAliases[company]);
+      }
+    }
+
+    // 重複を除去
+    companyKeywords = companyKeywords.filter(function (keyword, index, self) {
+      return self.indexOf(keyword) === index && keyword.length >= 2;
     });
-
-    // 短い会社名キーワードは除外（例: "の"など、誤検出しやすいもの）
-    companyKeywords = companyKeywords.filter(function (keyword) {
-      return keyword.length >= 2;
-    });
-
-    // 会社名の別表記も追加
-    companyKeywords.push("ハローワールド");
-    companyKeywords.push("エムスリー");
-    companyKeywords.push("エムスリーヘルス"); // 短縮表記
-    companyKeywords.push("M3ヘルス"); // 誤認識パターン
-    companyKeywords.push("グッドワークス");
-    companyKeywords.push("ジースタイラス");
-    companyKeywords.push("ENERALL");
-    companyKeywords.push("ENERRALL"); // 誤認識パターン
-    companyKeywords.push("エネラル"); // ENERALLの読み方
-    companyKeywords.push("エネラール"); // ENERALLの読み方
-    companyKeywords.push("エナラル"); // ENERALLの誤認識パターン
-    companyKeywords.push("トキウム");
-    companyKeywords.push("TOKIUM");
-    companyKeywords.push("ワーサル");
-    companyKeywords.push("NOTCH");
-    companyKeywords.push("NOCH"); // NOTCH誤認識パターン
-    companyKeywords.push("ノッチ"); // NOTCHの読み方
-    companyKeywords.push("ノーチ"); // NOTCHの誤認識パターン
-    companyKeywords.push("テコム");
-    companyKeywords.push("リディラバ");
-    companyKeywords.push("インフィニットマインド");
-    companyKeywords.push("佑人社");
-    companyKeywords.push("有人社"); // 佑人社の誤認識パターン
-    companyKeywords.push("勇人社"); // 佑人社の誤認識パターン
-    companyKeywords.push("優人社"); // 佑人社の誤認識パターン
-    companyKeywords.push("ゆうじんしゃ"); // 佑人社の読み方
-    companyKeywords.push("ユウジンシャ"); // 佑人社の読み方
 
     // 許可リスト会社名との関連性を各話者ごとに評価
     var companyAssociations = {};
@@ -1041,41 +980,22 @@ var InformationExtractor = (function () {
 
     var normalizedCompany = String(company).trim();
 
-    // ENERALL特殊対応（読み方や誤認識パターンも対応）
-    if (/ENERALL|ENERRALL|エネラル|エネラール|エナラル/i.test(normalizedCompany)) {
-      return "株式会社ENERALL";
-    }
+    // 許可されたsales_companyのリストとエイリアスを取得
+    var allowedCompanies = ClientMasterDataLoader.getClientCompanies();
+    var companyAliases = ClientMasterDataLoader.getClientCompanyAliases();
 
-    // NOTCH特殊対応（読み方や誤認識パターンも対応）
-    if (/NOTCH|NOCH|ノッチ|ノーチ/i.test(normalizedCompany)) {
-      return "株式会社NOTCH";
+    // エイリアスから正式な会社名を逆引き
+    for (var officialCompany in companyAliases) {
+      if (companyAliases.hasOwnProperty(officialCompany)) {
+        var aliases = companyAliases[officialCompany];
+        for (var i = 0; i < aliases.length; i++) {
+          if (normalizedCompany === aliases[i] ||
+            (new RegExp(aliases[i], 'i')).test(normalizedCompany)) {
+            return officialCompany;
+          }
+        }
+      }
     }
-
-    // エムスリーヘルスデザイン特殊対応
-    if (/エムスリーヘルスデザイン|エムスリーヘルス|M3ヘルス/.test(normalizedCompany)) {
-      return "エムスリーヘルスデザイン株式会社";
-    }
-
-    // 佑人社の特殊対応（読み方や誤認識パターンも対応）
-    if (/佑人社|有人社|勇人社|優人社|ゆうじんしゃ|ユウジンシャ/.test(normalizedCompany)) {
-      return "株式会社佑人社";
-    }
-
-    // 許可されたsales_companyのリスト
-    var allowedCompanies = [
-      "株式会社ENERALL",
-      "エムスリーヘルスデザイン株式会社",
-      "株式会社TOKIUM",
-      "株式会社グッドワークス",
-      "テコム看護",
-      "ハローワールド株式会社",
-      "株式会社ワーサル",
-      "株式会社NOTCH",
-      "株式会社ジースタイラス",
-      "株式会社佑人社",
-      "株式会社リディラバ",
-      "株式会社インフィニットマインド"
-    ];
 
     // 完全一致をチェック
     if (allowedCompanies.indexOf(normalizedCompany) !== -1) {

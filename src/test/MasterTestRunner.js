@@ -93,12 +93,39 @@ function runAllTests() {
     }
 
     // 9. Whisper統合テスト
-    Logger.log("\n【9/9】Whisper統合テスト実行中...");
+    Logger.log("\n【9/12】Whisper統合テスト実行中...");
     try {
       var whisperIntegrationResult = runWhisperIntegrationTests();
       overallResults.push({ suite: "Whisper統合", result: whisperIntegrationResult, status: "成功" });
     } catch (error) {
       overallResults.push({ suite: "Whisper統合", result: error.toString(), status: "失敗" });
+    }
+
+    // 10. ClientMasterDataLoader単体テスト
+    Logger.log("\n【10/12】ClientMasterDataLoader単体テスト実行中...");
+    try {
+      var clientMasterUnitResult = runClientMasterDataLoaderUnitTests();
+      overallResults.push({ suite: "ClientMasterDataLoader単体", result: clientMasterUnitResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "ClientMasterDataLoader単体", result: error.toString(), status: "失敗" });
+    }
+
+    // 11. ClientMasterDataLoader統合テスト
+    Logger.log("\n【11/12】ClientMasterDataLoader統合テスト実行中...");
+    try {
+      var clientMasterIntegrationResult = runClientMasterDataIntegrationTests();
+      overallResults.push({ suite: "ClientMasterDataLoader統合", result: clientMasterIntegrationResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "ClientMasterDataLoader統合", result: error.toString(), status: "失敗" });
+    }
+
+    // 12. ClientMasterDataLoader E2Eテスト
+    Logger.log("\n【12/12】ClientMasterDataLoader E2Eテスト実行中...");
+    try {
+      var clientMasterE2EResult = runClientMasterDataE2ETests();
+      overallResults.push({ suite: "ClientMasterDataLoader E2E", result: clientMasterE2EResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "ClientMasterDataLoader E2E", result: error.toString(), status: "失敗" });
     }
 
     // 総合結果の出力
@@ -180,6 +207,18 @@ function runSpecificTestSuite(suiteName) {
         break;
       case "whisperintegration":
         result = runWhisperIntegrationTests();
+        break;
+      case "clientmasterunit":
+      case "clientmasterdataunit":
+        result = runClientMasterDataLoaderUnitTests();
+        break;
+      case "clientmasterintegration":
+      case "clientmasterdataintegration":
+        result = runClientMasterDataIntegrationTests();
+        break;
+      case "clientmastere2e":
+      case "clientmasterdatae2e":
+        result = runClientMasterDataE2ETests();
         break;
       default:
         throw new Error("不明なテストスイート名: " + suiteName);
@@ -338,6 +377,9 @@ function showAvailableTests() {
   Logger.log("• runAllRefactoringIntegrationTests() - 統合テスト");
   Logger.log("• runWhisperServiceTests() - Whisperサービステスト");
   Logger.log("• runWhisperIntegrationTests() - Whisper統合テスト");
+  Logger.log("• runClientMasterDataLoaderUnitTests() - ClientMasterDataLoader単体テスト");
+  Logger.log("• runClientMasterDataIntegrationTests() - ClientMasterDataLoader統合テスト");
+  Logger.log("• runClientMasterDataE2ETests() - ClientMasterDataLoader E2Eテスト");
 
   Logger.log("\n【特定テストスイート実行】");
   Logger.log("• runSpecificTestSuite('config') - 環境設定テストのみ");
@@ -345,6 +387,9 @@ function showAvailableTests() {
   Logger.log("• runSpecificTestSuite('configmanager') - ConfigManagerテストのみ");
   Logger.log("• runSpecificTestSuite('filemovement') - FileMovementServiceテストのみ");
   Logger.log("• runSpecificTestSuite('integration') - 統合テストのみ");
+  Logger.log("• runSpecificTestSuite('clientmasterunit') - ClientMasterDataLoader単体テストのみ");
+  Logger.log("• runSpecificTestSuite('clientmasterintegration') - ClientMasterDataLoader統合テストのみ");
+  Logger.log("• runSpecificTestSuite('clientmastere2e') - ClientMasterDataLoader E2Eテストのみ");
 
   Logger.log("\n【使用例】");
   Logger.log("1. 全テスト実行: runAllTests()");
