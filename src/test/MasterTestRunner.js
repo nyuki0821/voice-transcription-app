@@ -120,12 +120,30 @@ function runAllTests() {
     }
 
     // 12. ClientMasterDataLoader E2Eテスト
-    Logger.log("\n【12/12】ClientMasterDataLoader E2Eテスト実行中...");
+    Logger.log("\n【12/14】ClientMasterDataLoader E2Eテスト実行中...");
     try {
       var clientMasterE2EResult = runClientMasterDataE2ETests();
       overallResults.push({ suite: "ClientMasterDataLoader E2E", result: clientMasterE2EResult, status: "成功" });
     } catch (error) {
       overallResults.push({ suite: "ClientMasterDataLoader E2E", result: error.toString(), status: "失敗" });
+    }
+
+    // 13. SalesPersonMasterLoader単体テスト
+    Logger.log("\n【13/14】SalesPersonMasterLoader単体テスト実行中...");
+    try {
+      var salesPersonUnitResult = runSalesPersonMasterLoaderUnitTests();
+      overallResults.push({ suite: "SalesPersonMasterLoader単体", result: salesPersonUnitResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "SalesPersonMasterLoader単体", result: error.toString(), status: "失敗" });
+    }
+
+    // 14. SalesPersonMasterLoader統合テスト
+    Logger.log("\n【14/14】SalesPersonMasterLoader統合テスト実行中...");
+    try {
+      var salesPersonIntegrationResult = runSalesPersonMasterIntegrationTests();
+      overallResults.push({ suite: "SalesPersonMasterLoader統合", result: salesPersonIntegrationResult, status: "成功" });
+    } catch (error) {
+      overallResults.push({ suite: "SalesPersonMasterLoader統合", result: error.toString(), status: "失敗" });
     }
 
     // 総合結果の出力
@@ -219,6 +237,13 @@ function runSpecificTestSuite(suiteName) {
       case "clientmastere2e":
       case "clientmasterdatae2e":
         result = runClientMasterDataE2ETests();
+        break;
+      case "salesperson":
+      case "salespersonunit":
+        result = runSalesPersonMasterLoaderUnitTests();
+        break;
+      case "salespersonintegration":
+        result = runSalesPersonMasterIntegrationTests();
         break;
       default:
         throw new Error("不明なテストスイート名: " + suiteName);
@@ -380,6 +405,8 @@ function showAvailableTests() {
   Logger.log("• runClientMasterDataLoaderUnitTests() - ClientMasterDataLoader単体テスト");
   Logger.log("• runClientMasterDataIntegrationTests() - ClientMasterDataLoader統合テスト");
   Logger.log("• runClientMasterDataE2ETests() - ClientMasterDataLoader E2Eテスト");
+  Logger.log("• runSalesPersonMasterLoaderUnitTests() - SalesPersonMasterLoader単体テスト");
+  Logger.log("• runSalesPersonMasterIntegrationTests() - SalesPersonMasterLoader統合テスト");
 
   Logger.log("\n【特定テストスイート実行】");
   Logger.log("• runSpecificTestSuite('config') - 環境設定テストのみ");
@@ -390,6 +417,8 @@ function showAvailableTests() {
   Logger.log("• runSpecificTestSuite('clientmasterunit') - ClientMasterDataLoader単体テストのみ");
   Logger.log("• runSpecificTestSuite('clientmasterintegration') - ClientMasterDataLoader統合テストのみ");
   Logger.log("• runSpecificTestSuite('clientmastere2e') - ClientMasterDataLoader E2Eテストのみ");
+  Logger.log("• runSpecificTestSuite('salesperson') - SalesPersonMasterLoader単体テストのみ");
+  Logger.log("• runSpecificTestSuite('salespersonintegration') - SalesPersonMasterLoader統合テストのみ");
 
   Logger.log("\n【使用例】");
   Logger.log("1. 全テスト実行: runAllTests()");

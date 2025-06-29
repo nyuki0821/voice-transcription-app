@@ -34,6 +34,8 @@ runLightweightTests()
 | **ClientMasterDataLoaderTest.js** | **クライアントマスター単体** | **スプレッドシート連携機能の単体テスト** |
 | **ClientMasterDataIntegrationTest.js** | **クライアントマスター統合** | **InformationExtractorとの統合テスト** |
 | **ClientMasterDataE2ETest.js** | **クライアントマスターE2E** | **実際のスプレッドシートを使ったE2Eテスト** |
+| **SalesPersonMasterLoaderTest.js** | **担当者マスター単体** | **担当者名管理機能の単体テスト** |
+| **SalesPersonMasterIntegrationTest.js** | **担当者マスター統合** | **TranscriptionServiceとの統合テスト** |
 
 ## 🎮 **実行手順**
 
@@ -218,6 +220,15 @@ runSpecificTestSuite('filemovement')
 
 // 統合テストのみ
 runSpecificTestSuite('integration')
+
+// ClientMasterDataLoaderテスト
+runSpecificTestSuite('clientmasterunit')
+runSpecificTestSuite('clientmasterintegration')
+runSpecificTestSuite('clientmastere2e')
+
+// SalesPersonMasterLoaderテスト
+runSpecificTestSuite('salesperson')
+runSpecificTestSuite('salespersonintegration')
 ```
 
 ## 📊 テスト結果の見方
