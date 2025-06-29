@@ -951,6 +951,38 @@ var TranscriptionService = (function () {
     Logger.log('GPT-4o-miniによる話者分離処理開始...');
 
     try {
+      // ClientMasterDataLoaderから営業会社リストを取得
+      var clientListPrompt = '';
+      try {
+        clientListPrompt = ClientMasterDataLoader.getClientListPrompt();
+      } catch (e) {
+        Logger.log('ClientMasterDataLoaderエラー、デフォルトリストを使用: ' + e);
+        // フォールバック用のデフォルトリスト
+        clientListPrompt = `【営業会社候補】
+・株式会社ENERALL
+・エムスリーヘルスデザイン株式会社
+・株式会社TOKIUM
+・株式会社グッドワークス
+・テコム看護
+・ハローワールド株式会社
+・株式会社ワーサル
+・株式会社NOTCH
+・株式会社ジースタイラス
+・株式会社佑人社
+・株式会社リディラバ
+・株式会社インフィニットマインド`;
+      }
+
+      // SalesPersonMasterLoaderから担当者リストを取得
+      var salesPersonPrompt = '';
+      try {
+        salesPersonPrompt = SalesPersonMasterLoader.getSalesPersonListPrompt();
+      } catch (e) {
+        Logger.log('SalesPersonMasterLoaderエラー、デフォルトを使用: ' + e);
+        // フォールバック用のデフォルト
+        salesPersonPrompt = '';
+      }
+
       const prompt = {
         model: "gpt-4o-mini",
         messages: [
@@ -964,19 +996,9 @@ var TranscriptionService = (function () {
 3. 営業担当者と顧客を区別
 4. 話者ラベルを【会社名 担当者名】形式で付与
 
-【営業会社候補】
-・株式会社ENERALL
-・エムスリーヘルスデザイン株式会社
-・株式会社TOKIUM
-・株式会社グッドワークス
-・テコム看護
-・ハローワールド株式会社
-・株式会社ワーサル
-・株式会社NOTCH
-・株式会社ジースタイラス
-・株式会社佑人社
-・株式会社リディラバ
-・株式会社インフィニットマインド
+${clientListPrompt}
+
+${salesPersonPrompt}
 
 【出力形式】
 各発言に話者ラベルを付けて改行で区切ってください。`
@@ -1015,7 +1037,10 @@ ${JSON.stringify(whisperResult.segments || [], null, 2)}`
       }
 
       const responseJson = JSON.parse(response.getContentText());
-      const separatedText = responseJson.choices[0].message.content;
+      let separatedText = responseJson.choices[0].message.content;
+
+      // 担当者名を正規化
+      separatedText = normalizeSalesPersonNamesInText(separatedText);
 
       // 話者分離結果から発話リストを作成
       const utterances = createUtterancesFromSeparatedText(separatedText);
@@ -1202,6 +1227,38 @@ ${JSON.stringify(whisperResult.segments || [], null, 2)}`
         }
       }
 
+      // ClientMasterDataLoaderから営業会社リストを取得
+      var clientListPrompt = '';
+      try {
+        clientListPrompt = ClientMasterDataLoader.getClientListPrompt();
+      } catch (e) {
+        Logger.log('ClientMasterDataLoaderエラー、デフォルトリストを使用: ' + e);
+        // フォールバック用のデフォルトリスト
+        clientListPrompt = `【営業会社の候補リスト】
+・株式会社ENERALL（エネラル）
+・エムスリーヘルスデザイン株式会社（エムスリーヘルスデザイン）
+・株式会社TOKIUM
+・株式会社グッドワークス
+・テコム看護
+・ハローワールド株式会社
+・株式会社ワーサル
+・株式会社NOTCH（ノッチ）
+・株式会社ジースタイラス
+・株式会社佑人社（ゆうじんしゃ）
+・株式会社リディラバ
+・株式会社インフィニットマインド`;
+      }
+
+      // SalesPersonMasterLoaderから担当者リストを取得
+      var salesPersonPrompt = '';
+      try {
+        salesPersonPrompt = SalesPersonMasterLoader.getSalesPersonListPrompt();
+      } catch (e) {
+        Logger.log('SalesPersonMasterLoaderエラー、デフォルトを使用: ' + e);
+        // フォールバック用のデフォルト
+        salesPersonPrompt = '';
+      }
+
       // GPT-4.1 miniに送るプロンプトを作成
       const prompt = {
         model: "gpt-4.1-mini",
@@ -1217,19 +1274,9 @@ ${JSON.stringify(whisperResult.segments || [], null, 2)}`
 - 自然な会話の流れになるよう発言をグループ化する
 - 各発話の前に話者ラベルを付け、発話ごとに適切に改行する
 
-【営業会社の候補リスト】
-・株式会社ENERALL（エネラル）
-・エムスリーヘルスデザイン株式会社（エムスリーヘルスデザイン）
-・株式会社TOKIUM
-・株式会社グッドワークス
-・テコム看護
-・ハローワールド株式会社
-・株式会社ワーサル
-・株式会社NOTCH（ノッチ）
-・株式会社ジースタイラス
-・株式会社佑人社（ゆうじんしゃ）
-・株式会社リディラバ
-・株式会社インフィニットマインド
+${clientListPrompt}
+
+${salesPersonPrompt}
 
 会話の最後に、検出されたエンティティ情報を要約して含めてください。`
           },
@@ -1274,7 +1321,10 @@ ${entitiesText}
       }
 
       const responseJson = JSON.parse(response.getContentText());
-      const enhancedText = responseJson.choices[0].message.content;
+      let enhancedText = responseJson.choices[0].message.content;
+
+      // 担当者名を正規化
+      enhancedText = normalizeSalesPersonNamesInText(enhancedText);
 
       Logger.log('GPT-4.1 miniによる会話洗練処理が完了しました');
 
@@ -1353,6 +1403,49 @@ ${entitiesText}
     }
   }
 
+  /**
+   * テキスト内の担当者名を正規化する
+   * @param {string} text - 対象テキスト
+   * @return {string} - 正規化されたテキスト
+   */
+  function normalizeSalesPersonNamesInText(text) {
+    if (!text) return text;
+
+    try {
+      // 話者ラベル内の担当者名を正規化
+      const lines = text.split('\n');
+      const normalizedLines = lines.map(function (line) {
+        // 話者ラベルを検出（【会社名 担当者名】形式）
+        const speakerMatch = line.match(/^【([^】]+)】/);
+        if (speakerMatch) {
+          const speakerLabel = speakerMatch[1];
+          const parts = speakerLabel.split(/[\s　]+/);
+
+          if (parts.length >= 2) {
+            // 会社名と担当者名を分離
+            const companyName = parts[0];
+            const personName = parts.slice(1).join(' ');
+
+            // 担当者名を正規化
+            const normalizedPersonName = SalesPersonMasterLoader.normalizeSalesPersonName(personName);
+
+            // 正規化された話者ラベルに置換
+            const normalizedLabel = '【' + companyName + ' ' + normalizedPersonName + '】';
+            return line.replace(/^【[^】]+】/, normalizedLabel);
+          }
+        }
+
+        return line;
+      });
+
+      return normalizedLines.join('\n');
+    } catch (error) {
+      Logger.log('担当者名正規化中にエラー: ' + error.toString());
+      // エラーが発生した場合は元のテキストを返す
+      return text;
+    }
+  }
+
   // トランスクリプションサービスをエクスポート
   return {
     transcribe: function (file, openaiApiKey) {
@@ -1374,6 +1467,7 @@ ${entitiesText}
     // 既存機能
     enhanceDialogueWithGPT4Mini: enhanceDialogueWithGPT4Mini,
     postProcessTranscription: postProcessTranscription,
-    formatSpeakerLabel: formatSpeakerLabel
+    formatSpeakerLabel: formatSpeakerLabel,
+    normalizeSalesPersonNamesInText: normalizeSalesPersonNamesInText
   };
 })();
